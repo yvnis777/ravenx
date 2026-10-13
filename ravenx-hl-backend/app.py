@@ -1,4 +1,7 @@
+import fcntl
 import logging
+import threading
+import time
 
 from flask import Flask
 from flask_cors import CORS
@@ -58,13 +61,62 @@ def create_app():
         db.create_all()
 
         if not app.config.get("DISABLE_BACKGROUND_WORKERS"):
-            _start_background_services(app)
+            _start_services_when_lock_free(app)
 
     @app.route("/health")
     def health_check():
         return {"status": "ok", "hl_env": hl_env.HL_ENV}
 
     return app
+
+
+# ── One copy engine per host ──────────────────────────────────────────────────
+# The copy engine lives inside the web process. A second process (an extra
+# gunicorn worker, a stray `flask run`) would copy every fill again — double
+# positions on users' real accounts. An exclusive flock makes the engine a
+# per-host singleton; the fd stays open for the life of the process.
+_engine_lock_fd = None
+
+
+def _try_engine_lock(path: str) -> bool:
+    """Take the engine lock without blocking. True if this process holds it."""
+    global _engine_lock_fd
+    if _engine_lock_fd is not None:
+        return True
+    fd = open(path, "a")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fd.close()
+        return False
+    _engine_lock_fd = fd
+    return True
+
+
+def _start_services_when_lock_free(app, poll_seconds: float = 2.0, wait_in_background: bool = True):
+    """Start background services once this process holds the engine lock.
+
+    On a graceful reload the new worker boots before the old one exits, so a busy
+    lock is waited on, never given up on — giving up would leave no engine at all.
+    """
+    log = logging.getLogger(__name__)
+    path = app.config["COPY_ENGINE_LOCK_FILE"]
+    if _try_engine_lock(path):
+        _start_background_services(app)
+        return
+
+    log.warning("Copy engine lock %s is held by another process; waiting for it", path)
+
+    def wait_then_start():
+        while not _try_engine_lock(path):
+            time.sleep(poll_seconds)
+        log.info("Copy engine lock acquired; starting background services")
+        _start_background_services(app)
+
+    if wait_in_background:
+        threading.Thread(target=wait_then_start, daemon=True, name="engine-lock-wait").start()
+    else:
+        wait_then_start()
 
 
 def _start_background_services(app):

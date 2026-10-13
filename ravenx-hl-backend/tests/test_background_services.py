@@ -44,19 +44,28 @@ def started(monkeypatch):
     return calls
 
 
-def _start(enable_leaderboard):
-    from app import _start_background_services
-    app = SimpleNamespace(config={"ENABLE_LEADERBOARD": enable_leaderboard})
-    _start_background_services(app)
+@pytest.fixture(autouse=True)
+def lock_path(tmp_path, monkeypatch):
+    """Each test gets its own engine lock, and no process-wide lock carries over."""
+    import app as app_module
+    monkeypatch.setattr(app_module, "_engine_lock_fd", None)
+    return str(tmp_path / "engine.lock")
 
 
-def test_leaderboard_off_starts_only_copy_monitoring(started):
-    _start(False)
+def _start(enable_leaderboard, lock_path):
+    from app import _start_services_when_lock_free
+    app = SimpleNamespace(config={"ENABLE_LEADERBOARD": enable_leaderboard,
+                                  "COPY_ENGINE_LOCK_FILE": lock_path})
+    _start_services_when_lock_free(app, poll_seconds=0.01, wait_in_background=False)
+
+
+def test_leaderboard_off_starts_only_copy_monitoring(started, lock_path):
+    _start(False, lock_path)
     assert started == ["copy_ws"]
 
 
-def test_leaderboard_on_starts_discovery_pipeline(started):
-    _start(True)
+def test_leaderboard_on_starts_discovery_pipeline(started, lock_path):
+    _start(True, lock_path)
     assert started[0] == "copy_ws"
     for name in ("price_feed", "trade_stream", "job:wallet_harvester", "job:trader_scanner",
                  "job:deep_enricher", "job:live_refresh", "scheduler", "staggered_start"):
@@ -70,3 +79,47 @@ def test_enable_leaderboard_parsing(monkeypatch, raw, expected):
     import config
     monkeypatch.setenv("ENABLE_LEADERBOARD", raw)
     assert importlib.reload(config).Config.ENABLE_LEADERBOARD is expected
+
+
+# ── One copy engine per host ─────────────────────────────────────────────────
+# Two engines would copy every fill twice — double positions on users' real accounts.
+
+def _hold(lock_path):
+    """Take the lock the way a second backend process would."""
+    import fcntl
+    fd = open(lock_path, "w")
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def test_engine_does_not_start_while_another_process_holds_the_lock(started, lock_path):
+    from app import _try_engine_lock
+    other = _hold(lock_path)
+    try:
+        assert _try_engine_lock(lock_path) is False
+    finally:
+        other.close()
+
+
+def test_engine_starts_once_the_other_process_releases_the_lock(started, lock_path, monkeypatch):
+    """Graceful reload: the new worker waits for the old one, then takes over."""
+    import app as app_module
+    other = _hold(lock_path)
+    waits = []
+
+    def old_worker_exits_while_we_wait(seconds):
+        waits.append(seconds)
+        other.close()
+
+    monkeypatch.setattr(app_module.time, "sleep", old_worker_exits_while_we_wait)
+    app = SimpleNamespace(config={"ENABLE_LEADERBOARD": False, "COPY_ENGINE_LOCK_FILE": lock_path})
+    app_module._start_services_when_lock_free(app, poll_seconds=0.02, wait_in_background=False)
+    assert waits == [0.02]  # nothing started until the lock came free
+    assert started == ["copy_ws"]
+
+
+def test_same_process_may_start_again(started, lock_path):
+    """create_app() runs more than once per process in tests and CLI scripts."""
+    from app import _try_engine_lock
+    assert _try_engine_lock(lock_path) is True
+    assert _try_engine_lock(lock_path) is True

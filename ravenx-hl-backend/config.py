@@ -1,13 +1,26 @@
 import os
+import tempfile
 from datetime import timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+def normalize_database_url(url: str) -> str:
+    """Point bare Postgres URLs at psycopg 3, the only Postgres driver we install.
+
+    SQLAlchemy maps postgresql:// to psycopg2, which isn't installed, so the app
+    would crash on boot with an otherwise valid URL.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 class Config:
     # Database
-    SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"]
+    SQLALCHEMY_DATABASE_URI = normalize_database_url(os.environ["DATABASE_URL"])
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # JWT
@@ -24,6 +37,10 @@ class Config:
     # Background workers
     TRADER_SCAN_INTERVAL_MINUTES = int(os.environ.get("TRADER_SCAN_INTERVAL_MINUTES", "30"))
     DISABLE_BACKGROUND_WORKERS = bool(os.environ.get("DISABLE_BACKGROUND_WORKERS", ""))
+    # Only one process per host may run the copy engine (see app._try_engine_lock).
+    COPY_ENGINE_LOCK_FILE = os.environ.get(
+        "COPY_ENGINE_LOCK_FILE", os.path.join(tempfile.gettempdir(), "ravenx-copy-engine.lock")
+    )
     # Wallet discovery (harvesters, scanner, price feed) for the public leaderboard.
     # Off by default: copying never reads it, and it is most of our HL API traffic.
     ENABLE_LEADERBOARD = os.environ.get("ENABLE_LEADERBOARD", "").strip().lower() in ("1", "true", "yes")

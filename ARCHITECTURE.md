@@ -1,6 +1,6 @@
 # RavenX — Backend
 
-Copy-trading platform for Hyperliquid. Users connect their own wallet, browse a trader leaderboard, authorize a limited agent wallet, and mirror a target wallet's positions. The RavenX algorithm keeps the follower's average entry price ≤ the target's (for longs) by placing GTC limit orders.
+Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the address of a wallet to copy (the leaderboard is switched off for launch), authorize a limited agent wallet, and mirror that wallet's positions. The RavenX algorithm keeps the follower's average entry price ≤ the target's (for longs) by placing GTC limit orders.
 
 **Non-custodial.** RavenX never holds user funds or private keys. Trading is authorized through a Hyperliquid agent wallet, which can place orders but cannot withdraw.
 
@@ -12,11 +12,11 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, browse a 
 | Database | PostgreSQL in production, SQLite in dev (SQLAlchemy 2.x) |
 | Auth | EIP-191 wallet signature → JWT |
 | Trading auth | HL agent wallets (`ApproveAgent`); private key encrypted at rest in `subscriptions` (Fernet) |
-| Revenue | HL builder fee (`ApproveBuilderFee`), 0.03% per order |
+| Revenue | None for now — copying is free. Builder-fee rail (`ApproveBuilderFee`) is built but dormant |
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (17 tests) |
+| Tests | pytest (55 tests) |
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 cp .env.example .env          # DATABASE_URL, JWT_SECRET_KEY, AGENT_KEY_ENCRYPTION_KEY at minimum
 flask --app app run --port 5000
 
-python seed_traders.py        # seed the leaderboard on first run
+python seed_traders.py        # only if ENABLE_LEADERBOARD=1: seed the leaderboard
 
 DISABLE_BACKGROUND_WORKERS=1 python -m pytest -q    # tests
 ```
@@ -37,8 +37,9 @@ Frontend lives in `ravenx-frontend/` — see [`ravenx-frontend/ARCHITECTURE.md`]
 ## Environment Variables
 
 ```
-DATABASE_URL                  PostgreSQL connection string (required)
+DATABASE_URL                  PostgreSQL connection string (required). postgresql:// is rewritten to postgresql+psycopg:// (only psycopg 3 is installed)
 JWT_SECRET_KEY                Long random string for JWT signing (required)
+HL_ENV                        mainnet | testnet (default mainnet). Must match NEXT_PUBLIC_HL_ENV — the copy flow refuses to start otherwise.
 AGENT_KEY_ENCRYPTION_KEY      Fernet key(s) encrypting agent private keys (required). "new,old" to rotate.
 BUILDER_ADDRESS               HL account receiving builder fees. EMPTY = fees off.
                               Must hold >= 100 USDC perps account value or HL rejects the fee.
@@ -50,6 +51,7 @@ AGENT_PENDING_TTL_SECONDS     How long a generated agent waits for approval, def
 AGENT_KEY_GC_DAYS             Intended retention for stopped subs' agent keys, default 90 — NOT YET ENFORCED, no job reads it
 ENABLE_LEADERBOARD            1 = run wallet discovery (harvesters, scanner, price feed). Default off.
 DISABLE_BACKGROUND_WORKERS    Set to any value to skip background threads
+COPY_ENGINE_LOCK_FILE         Per-host copy-engine lock, default <tmp>/ravenx-copy-engine.lock (prod: /var/lib/ravenx/copy-engine.lock)
 CORS_ORIGINS                  Comma-separated frontend URLs
 ```
 
@@ -64,9 +66,11 @@ ravenx-hl-backend/
 ├── app.py                    # Flask app factory + staggered background service startup
 ├── config.py                 # Env-based config
 ├── extensions.py             # db, jwt singletons
+├── hl_env.py                 # HL_ENV → mainnet/testnet API URLs
 ├── seed_traders.py           # CLI: harvest + enrich wallets
 ├── models/
 │   ├── user.py               # ParentWallet
+│   ├── encrypted.py          # EncryptedText column type (Fernet) for agent keys
 │   ├── subscription.py       # Subscription (parent → target, agent keypair, N per user)
 │   ├── position.py           # TrackedPosition (this sub's intended share per coin)
 │   ├── trader.py             # Trader (leaderboard cache + period PnL columns)
@@ -153,12 +157,13 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 ## Business Model
 
-**0.03% builder fee per order** placed by the bot, collected by Hyperliquid itself and claimed like referral rewards. No subscription, no profit share, nothing charged on trades the user places themselves. Competitors: Dextrabot 0.055%, Phantom 0.05%, Based 0.025%.
+**Copying is free at launch** — `BUILDER_ADDRESS` is empty, so no fee is attached and users never see a fee signature. The user still wants to see usage (who copies which wallet, most-copied wallets): that's a query on `subscriptions`, disclosed on the privacy page.
 
-Fees are **off** whenever `BUILDER_ADDRESS` is empty — no fee is attached and users are never asked for the fee signature.
+The fee rail is kept, dormant: setting `BUILDER_ADDRESS` turns on a **0.03% builder fee per bot order**, collected by Hyperliquid and claimed like referral rewards. Competitors: Dextrabot 0.055%, Phantom 0.05%, Based 0.025%.
 
 ## Key Gotchas
 
+- **Exactly one backend process, ever.** The copy engine runs inside the web process, so a second process copies every fill again (double positions, real money). Guards: `gunicorn.conf.py` refuses `workers > 1` and sets `preload_app = False`; `app._try_engine_lock` holds an exclusive flock so a second process on the host *waits* (it doesn't give up — on a graceful reload the new worker boots before the old exits). Run with `gunicorn -c gunicorn.conf.py "app:create_app()"`.
 - **The HL `Info` client is built lazily** (`copy_service._get_info()`). Never construct SDK clients at import time — a rate-limited HL made the module unimportable and took the backend down on boot.
 - **HL metadata is cached** in `agent_service._get_metas()`. `Exchange(...)` fetches perp + spot meta on every construction, and we build one per copy execution — without the cache that's two extra calls per fill.
 - **Hyperliquid rate limits are strict.** Max ~4 concurrent workers for `user_state`; startup jobs are staggered; never fire all background jobs at once on restart.
@@ -173,6 +178,10 @@ Fees are **off** whenever `BUILDER_ADDRESS` is empty — no fee is attached and 
 - `db.create_all()` is used in dev — use Alembic for production schema changes.
 - `risk_params` supports: `stop_loss_pct`, `max_drawdown_pct`, `max_position_usd`, `min_position_usd`, `price_tolerance_pct`, `copy_existing_mode`.
 
+## Production
+
+Self-hosted on a single VPS behind nginx — see [`deploy/README.md`](deploy/README.md) for the full runbook (systemd units, nginx config, backups, updates).
+
 ## Status
 
-V2 (non-custodial, HL-only, builder fee) is implemented and unit-tested. **The agent-approval and fee-approval flows have never run against real Hyperliquid** — no signature has been submitted from this code. An end-to-end test with a small funded account is the main outstanding risk before launch.
+V2 is implemented and unit-tested, and runs locally against **mainnet** (`HL_ENV=mainnet`) with the leaderboard off. **The agent-approval flow has never run against real Hyperliquid** — no signature has been submitted from this code. An end-to-end test with a small funded account is the main outstanding risk before launch. Also open: `AGENT_KEY_GC_DAYS` isn't enforced.

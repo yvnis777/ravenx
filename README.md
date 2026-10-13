@@ -79,6 +79,10 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 `HL_ENV` / `NEXT_PUBLIC_HL_ENV` select Hyperliquid **mainnet** (real funds) or **testnet**, and must match.
 
+### Self-hosting
+
+[`deploy/README.md`](deploy/README.md) is the step-by-step runbook for a single VPS: nginx, systemd, PostgreSQL, HTTPS, backups. Run **exactly one** backend process; the copy engine lives inside it.
+
 ### Tests
 
 ```bash

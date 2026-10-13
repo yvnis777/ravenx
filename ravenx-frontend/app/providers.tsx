@@ -16,8 +16,8 @@ createAppKit({
   metadata: {
     name: 'RavenX',
     description: 'Copy-trading platform for Hyperliquid',
-    url: typeof window !== 'undefined' ? window.location.origin : 'https://ravenx.io',
-    icons: [`${typeof window !== 'undefined' ? window.location.origin : 'https://ravenx.io'}/ravenx-icon-512.png`],
+    url: typeof window !== 'undefined' ? window.location.origin : 'https://ravenx.app',
+    icons: [`${typeof window !== 'undefined' ? window.location.origin : 'https://ravenx.app'}/ravenx-icon-512.png`],
   },
   themeMode: 'dark',
 })

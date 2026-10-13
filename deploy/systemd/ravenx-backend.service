@@ -1,0 +1,30 @@
+# /etc/systemd/system/ravenx-backend.service
+# API + copy engine. Exactly one instance (see gunicorn.conf.py).
+[Unit]
+Description=RavenX backend (API + copy engine)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+User=ravenx
+Group=ravenx
+WorkingDirectory=/opt/ravenx/ravenx-hl-backend
+EnvironmentFile=/etc/ravenx/backend.env
+# Engine lock in a fixed, service-owned place so any second process on this host sees it
+StateDirectory=ravenx
+Environment=COPY_ENGINE_LOCK_FILE=/var/lib/ravenx/copy-engine.lock
+ExecStart=/opt/ravenx/ravenx-hl-backend/venv/bin/gunicorn -c gunicorn.conf.py "app:create_app()"
+# Stop fully before starting again, so the new engine never overlaps the old one
+KillMode=mixed
+TimeoutStopSec=40
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
