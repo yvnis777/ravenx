@@ -1,0 +1,181 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════
+   RavenX design tokens — pro trading terminal, dark only.
+
+   Components must never hardcode a color. Use the semantic utilities
+   these tokens generate (bg-panel, text-muted, border-line, …) so a
+   value can change in one place. Green and red are RESERVED for
+   profit and loss — never for interface state.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Surfaces — three depths, near-black */
+  --surface: #0a0a0c;         /* page background */
+  --panel: #101014;           /* panels, table headers, nav */
+  --raised: #17171d;          /* inputs, hovered rows, menus */
+  --hover: rgba(255, 255, 255, 0.04);
+
+  /* Lines */
+  --line: #212128;            /* default 1px divider */
+  --line-strong: #2e2e38;     /* emphasised / focused border */
+
+  /* Text — all three pass WCAG AA on --surface and --panel */
+  --fg: #ecedf0;              /* primary: ~16:1 */
+  --muted: #a4a6b0;           /* secondary: ~8:1 */
+  --faint: #7a7c88;           /* tertiary/labels: ~4.8:1 */
+
+  /* Brand accent — gold. The only interactive color. */
+  --accent: #f5a623;
+  --accent-hover: #ffb944;
+  --accent-dim: rgba(245, 166, 35, 0.12);
+  --accent-line: rgba(245, 166, 35, 0.35);
+  --on-accent: #0a0a0c;       /* text on a gold fill */
+
+  /* Financial semantics — profit/loss only */
+  --profit: #2ecc80;
+  --loss: #ff5c5c;
+  --profit-dim: rgba(46, 204, 128, 0.12);
+  --loss-dim: rgba(255, 92, 92, 0.12);
+  --warn: #f0b429;
+
+  /* Density */
+  --row-h: 32px;              /* table row height */
+  --control-h: 30px;          /* buttons, inputs, tabs */
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-dim: var(--accent-dim);
+  --color-on-accent: var(--on-accent);
+  --color-profit: var(--profit);
+  --color-loss: var(--loss);
+  --color-profit-dim: var(--profit-dim);
+  --color-loss-dim: var(--loss-dim);
+  --color-warn: var(--warn);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-jb), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: var(--font-chakra), ui-sans-serif, sans-serif;
+
+  /* Terminal radii — tight, never pill-shaped */
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+}
+
+@layer base {
+  body {
+    background: var(--surface);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Headings are UI labels here, not editorial display type */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+  }
+
+  /* Numbers line up in columns or the tables are unreadable */
+  .num, table td, table th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background: var(--accent-dim);
+    color: var(--fg);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: 4px;
+  }
+
+  select option {
+    background: var(--raised);
+    color: var(--fg);
+  }
+}
+
+@layer utilities {
+  /* Monospaced tabular figures — every price, size, PnL and address */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .text-profit { color: var(--profit); }
+  .text-loss { color: var(--loss); }
+
+  /* Wordmark only — the one place display type survives */
+  .wordmark {
+    font-family: var(--font-display);
+    letter-spacing: 0;
+  }
+
+  .scrollbar-hide { scrollbar-width: none; }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+
+  /* Dialog surface — sits above the page, so it gets a stronger edge */
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+    animation: modal-in 0.12s ease both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .modal { animation: none; }
+  }
+}
+
+/* ── Motion — short, no bounce ── */
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fade-in 0.15s ease both; }
+.animate-slide-up { animation: slide-up 0.15s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-up { animation: none; }
+}

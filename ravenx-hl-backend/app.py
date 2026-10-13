@@ -1,0 +1,131 @@
+import logging
+
+from flask import Flask
+from flask_cors import CORS
+
+from config import Config
+from extensions import db, jwt
+
+
+def create_app():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    import hl_env
+    log = logging.getLogger("ravenx")
+    if hl_env.IS_MAINNET:
+        log.info("Hyperliquid network: MAINNET (%s)", hl_env.API_URL)
+    else:
+        log.warning("=" * 60)
+        log.warning("Hyperliquid network: TESTNET (%s) — no real funds", hl_env.API_URL)
+        log.warning("=" * 60)
+
+    app = Flask(__name__)
+    app.config.from_object(Config)
+
+    db.init_app(app)
+    jwt.init_app(app)
+    CORS(app, origins=app.config["CORS_ORIGINS"])
+
+    from routes.auth import auth_bp
+    from routes.agent import agent_bp
+    from routes.copy import copy_bp
+    from routes.dashboard import dashboard_bp
+    from routes.notifications import notifications_bp
+
+    app.register_blueprint(auth_bp, url_prefix="/auth")
+    app.register_blueprint(agent_bp, url_prefix="/agent")
+    app.register_blueprint(copy_bp, url_prefix="/copy")
+    app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
+    app.register_blueprint(notifications_bp, url_prefix="/notifications")
+
+    with app.app_context():
+        # Fail at boot, not on the first copy, if the agent-key master key is missing or malformed
+        from models.encrypted import _cipher
+        _cipher()
+
+        # Touch every model so SQLAlchemy registers the tables
+        import models.discovered_wallet  # noqa: F401
+        import models.notification  # noqa: F401
+        import models.position  # noqa: F401
+        import models.subscription  # noqa: F401
+        import models.trader  # noqa: F401
+        import models.user  # noqa: F401
+        import models.nonce  # noqa: F401
+        db.create_all()
+
+        if not app.config.get("DISABLE_BACKGROUND_WORKERS"):
+            _start_background_services(app)
+
+    @app.route("/health")
+    def health_check():
+        return {"status": "ok", "hl_env": hl_env.HL_ENV}
+
+    return app
+
+
+def _start_background_services(app):
+    from monitoring.websocket_manager import WebSocketManager
+
+    # Copy monitoring always runs: it watches targets and places followers' orders.
+    WebSocketManager.get_instance().start_in_background(app)
+
+    if app.config.get("ENABLE_LEADERBOARD"):
+        _start_leaderboard_services(app)
+    else:
+        logging.getLogger(__name__).info("Leaderboard disabled — wallet discovery workers not started")
+
+
+def _start_leaderboard_services(app):
+    """Wallet discovery + enrichment feeding /dashboard. Nothing in the copy path depends on it."""
+    from monitoring.price_feed import PriceFeed
+    from workers.wallet_harvester import harvest_wallets
+    from workers.trader_scanner import (
+        scan_and_rank_traders,
+        deep_enrich_traders,
+        refresh_live_metrics,
+        LIVE_REFRESH_INTERVAL_MINUTES,
+    )
+    from workers.trade_stream_harvester import start_trade_stream
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    PriceFeed.get_instance().start_in_background(app)
+    start_trade_stream(app)
+
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(func=lambda: harvest_wallets(app), trigger="interval",
+                      minutes=5, id="wallet_harvester", replace_existing=True)
+    scheduler.add_job(func=lambda: scan_and_rank_traders(app), trigger="interval",
+                      minutes=5, id="trader_scanner", replace_existing=True)
+    scheduler.add_job(func=lambda: deep_enrich_traders(app), trigger="interval",
+                      minutes=5, id="deep_enricher", replace_existing=True)
+    scheduler.add_job(func=lambda: refresh_live_metrics(app), trigger="interval",
+                      minutes=LIVE_REFRESH_INTERVAL_MINUTES, id="live_refresh",
+                      replace_existing=True)
+    scheduler.start()
+
+    import threading
+    import time as _time
+
+    def _staggered_start():
+        for delay, fn, args in [
+            (0, harvest_wallets, (app,)),
+            (30, scan_and_rank_traders, (app,)),
+            (60, deep_enrich_traders, (app,)),
+            (90, refresh_live_metrics, (app,)),
+        ]:
+            _time.sleep(delay)
+            try:
+                fn(*args)
+            except Exception as e:
+                logging.getLogger(__name__).error("Startup job %s failed: %s",
+                                                  fn.__name__, e)
+    threading.Thread(target=_staggered_start, daemon=True).start()
+
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(debug=False, host="0.0.0.0", port=5000)
