@@ -1,4 +1,4 @@
-# Deploying RavenX to a Hetzner VPS (ravenx.app)
+# Deploying RavenX to a VPS (ravenx.app)
 
 One small server runs everything:
 
@@ -17,6 +17,7 @@ Files in this folder:
 | `nginx/ravenx.app.conf` | `/etc/nginx/sites-available/ravenx.app` |
 | `deploy.sh` | run on the server for every update |
 | `backup-db.sh` | nightly cron |
+| `cloudflare-ips.sh` | once after enabling the Cloudflare proxy, then monthly cron |
 
 > **Never run more than one backend process.** The copy engine lives inside it: a second
 > process would copy every fill again, doubling users' positions with real money.
@@ -28,28 +29,35 @@ Files in this folder:
 ## 0. Before you start
 
 You need:
-- A Hetzner Cloud account.
+- An account with a VPS provider.
 - Access to the DNS settings for `ravenx.app`, wherever you bought it.
 - A password manager, for the secrets generated below.
 - An SSH key. Create one on your own computer if you don't have one:
   ```bash
-  ssh-keygen -t ed25519 -f ~/.ssh/ravenx-hetzner -C ravenx
-  cat ~/.ssh/ravenx-hetzner.pub        # paste this into Hetzner in step 1
+  ssh-keygen -t ed25519 -f ~/.ssh/ravenx-vps -C ravenx
+  cat ~/.ssh/ravenx-vps.pub            # used in step 1
   ```
 
-## 1. Create the server (Hetzner Cloud Console)
+## 1. Create the server
 
-**Add Server**:
-- **Location:** any EU site (Falkenstein, Nuremberg, Helsinki).
-- **Image:** Ubuntu 24.04.
-- **Type:** shared vCPU x86, **2 vCPU / 4 GB RAM** (CX22 or its current equivalent). Plenty while the leaderboard is off.
-- **Networking:** public IPv4 + IPv6.
-- **SSH keys:** add `ravenx-hetzner.pub`. Password login is then disabled.
-- **Firewalls:** create one allowing inbound **TCP 22, 80, 443** only.
-- **Backups:** enable them. It costs about 20% extra and gives daily whole-server snapshots.
+Any provider works. Order a VPS with:
+- **Virtualization:** KVM (a full VM). Avoid OpenVZ/LXC containers.
+- **Image:** Ubuntu 26.04 LTS. The commands below assume it (Node 22 and PostgreSQL 18 come from Ubuntu's own packages).
+- **Size:** x86, **2 vCPU / 4 GB RAM** or more. Plenty while the leaderboard is off; less RAM makes the frontend build struggle.
+- **Location:** anywhere in or near the EU.
+- **Networking:** a public IPv4 (IPv6 optional).
+- **SSH key:** add `ravenx-vps.pub` if the provider's panel accepts one. If it only gives you a
+  root password, install the key yourself:
+  ```bash
+  ssh-copy-id -i ~/.ssh/ravenx-vps.pub root@<SERVER_IPV4>
+  ```
+- **Firewall:** if the provider offers one, allow inbound **TCP 22, 80, 443** only. Step 3 sets
+  up the same rules on the server either way.
+- **Backups:** enable server backups or snapshots if offered. Without them, nothing is copied
+  off the machine (see step 11).
 - **Name:** `ravenx-1`
 
-Note the server's IPv4 and IPv6 addresses.
+Note the server's IPv4 (and IPv6, if any) address.
 
 ## 2. Point the domain at it
 
@@ -62,6 +70,8 @@ At your DNS provider:
 | A | `www` | server IPv4 |
 | AAAA | `www` | server IPv6 |
 
+Skip the AAAA records if the server has no IPv6.
+
 If the DNS is on Cloudflare, set these records to **DNS only** (grey cloud) for now, so the
 certificate step works. Check propagation from your computer: `dig +short ravenx.app`
 should print the server IP.
@@ -69,23 +79,35 @@ should print the server IP.
 ## 3. First login and base setup
 
 ```bash
-ssh -i ~/.ssh/ravenx-hetzner root@<SERVER_IPV4>
+ssh -i ~/.ssh/ravenx-vps root@<SERVER_IPV4>
 ```
+
+Once key login works, turn off password logins for SSH:
+
+```bash
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' > /etc/ssh/sshd_config.d/00-keys-only.conf
+sshd -t && systemctl reload ssh
+```
+
+Keep this session open and check that a new `ssh -i ~/.ssh/ravenx-vps root@<SERVER_IPV4>`
+still gets in before logging out.
 
 Then, on the server:
 
 ```bash
 apt update && apt -y full-upgrade
-apt -y install git nginx postgresql python3.12-venv python3-pip certbot python3-certbot-nginx \
+apt -y install git nginx postgresql nodejs npm certbot python3-certbot-nginx \
                unattended-upgrades ufw curl ca-certificates
 dpkg-reconfigure -f noninteractive unattended-upgrades      # automatic security updates
-
-# Node.js 22 LTS
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt -y install nodejs
 node --version                                               # v22.x
 
-# Host firewall (in addition to Hetzner's)
+# Python 3.12 for the backend (Ubuntu 26.04 ships 3.14, which the backend isn't tested on).
+# Installed under /opt, not a home directory: the backend service runs with ProtectHome.
+curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+UV_PYTHON_INSTALL_DIR=/opt/uv/python uv python install 3.12
+chmod -R a+rX /opt/uv
+
+# Host firewall (in addition to any provider firewall)
 ufw allow OpenSSH && ufw allow 'Nginx Full' && ufw --force enable
 
 # Service user that owns the app; no login shell
@@ -115,7 +137,7 @@ chown -R ravenx:ravenx /opt/ravenx
 
 ```bash
 cd /opt/ravenx/ravenx-hl-backend
-sudo -u ravenx python3.12 -m venv venv
+sudo -u ravenx env UV_PYTHON_INSTALL_DIR=/opt/uv/python uv venv --seed --python 3.12 --managed-python venv
 sudo -u ravenx venv/bin/pip install -r requirements.txt
 ```
 
@@ -197,6 +219,36 @@ certbot --nginx -d ravenx.app -d www.ravenx.app --redirect -m <your email> --agr
 Certbot adds HTTPS and renews the certificate automatically. Check:
 `curl -s https://ravenx.app/api/health` should return the health JSON.
 
+### Cloudflare proxy (optional)
+
+If the DNS is on Cloudflare, you can now turn the proxy on:
+
+1. In Cloudflare, set both A records to **Proxied** (orange cloud).
+2. Set **SSL/TLS → Overview** to **Full (strict)**. Never use *Flexible*: it sends traffic
+   to the server unencrypted, and nginx's HTTPS redirect makes it loop.
+3. On the server:
+   ```bash
+   /opt/ravenx/deploy/cloudflare-ips.sh
+   echo '30 4 1 * * root /opt/ravenx/deploy/cloudflare-ips.sh 2>&1 | logger -t cloudflare-ips' \
+       > /etc/cron.d/ravenx-cloudflare
+   ```
+
+Behind the proxy, every request reaches nginx from a Cloudflare address. The script makes
+nginx take the visitor's real IP from Cloudflare's `CF-Connecting-IP` header, so the API rate
+limit is per visitor. Without it, everyone arriving through the same Cloudflare server shares
+one limit. It also limits ports 80 and 443 to Cloudflare's IP ranges, so the server can't be
+reached directly by its IP. SSH stays open. The cron job reruns it monthly to pick up changes
+to Cloudflare's ranges. Certificate renewals keep working through the proxy.
+
+**Turning the proxy off later** makes the site unreachable until the web ports are reopened:
+
+```bash
+rm /etc/cron.d/ravenx-cloudflare /etc/nginx/conf.d/cloudflare-realip.conf
+ufw allow 80/tcp && ufw allow 443/tcp
+ufw show added | grep "comment 'cloudflare'" | sed 's/^ufw allow/ufw delete allow/; s/ comment .*//' | sh
+systemctl reload nginx
+```
+
 ## 10. Allow the domain in Reown (WalletConnect)
 
 Go to **cloud.reown.com → your project → Domain / Allowlist** and add `https://ravenx.app`.
@@ -209,7 +261,16 @@ echo '15 3 * * * root /opt/ravenx/deploy/backup-db.sh' > /etc/cron.d/ravenx-back
 /opt/ravenx/deploy/backup-db.sh && ls -lh /var/backups/ravenx/      # test it once
 ```
 
-Dumps are kept for 14 days. Hetzner's server backups (step 1) cover off-machine copies.
+Dumps are kept for 14 days, **on the same disk**. If the server dies, they go with it, so you
+also need an off-machine copy: the provider's server backups (step 1), or a regular pull to your
+own computer:
+
+```bash
+rsync -a -e "ssh -i ~/.ssh/ravenx-vps" root@<SERVER_IPV4>:/var/backups/ravenx/ ~/ravenx-backups/
+```
+
+Dumps hold agent keys encrypted, never the `AGENT_KEY_ENCRYPTION_KEY`. Never store that key
+alongside them.
 
 ## 12. Uptime alerts
 
