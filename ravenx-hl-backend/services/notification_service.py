@@ -21,17 +21,6 @@ def notify_copy_executed(parent_address: str, coin: str, side: str, size: float,
     db.session.commit()
 
 
-def notify_limit_placed(parent_address: str, coin: str, side: str, size: float, limit_price: float):
-    n = Notification(
-        parent_address=parent_address,
-        type="limit_placed",
-        title=f"Limit {side.upper()} {coin}",
-        message=f"GTC limit order placed: {side.lower()} {abs(size):.4f} {coin} at ${limit_price:,.2f}. Waiting for price to reach target.",
-    )
-    db.session.add(n)
-    db.session.commit()
-
-
 def notify_order_skipped(parent_address: str, coin: str, reason: str):
     n = Notification(
         parent_address=parent_address,

@@ -60,6 +60,21 @@ def start_copying():
                 "error": f"RavenX fee ({rate}) is not approved on Hyperliquid for this account"
             }), 400
 
+    # "New only": remember what the target already holds so the engine never
+    # opens it. If HL can't tell us, refuse rather than copy everything.
+    copy_existing_mode = risk_params.get("copy_existing_mode", "none")
+    held_at_start = None
+    if copy_existing_mode == "none":
+        try:
+            from services.copy_service import _get_state
+            target_pos, _ = _get_state(target_address)
+        except Exception as e:
+            logger.warning("Could not read target %s positions: %s", target_address, e)
+            return jsonify({
+                "error": "Couldn't read this wallet's positions from Hyperliquid. Please try again."
+            }), 502
+        held_at_start = {coin: 1 if p["szi"] > 0 else -1 for coin, p in target_pos.items()}
+
     # Pop the cached private key (consumes the pending entry)
     try:
         agent_pkey = pop_pending_pkey(agent_address, parent)
@@ -93,6 +108,7 @@ def start_copying():
         is_active=True,
         risk_params=risk_params,
         peak_equity=peak_equity,
+        held_at_start=held_at_start,
     )
     db.session.add(sub)
     db.session.commit()
@@ -100,7 +116,6 @@ def start_copying():
     WebSocketManager.get_instance().subscribe(target_address)
 
     # Optional initial sync
-    copy_existing_mode = (risk_params or {}).get("copy_existing_mode", "none")
     if copy_existing_mode != "none":
         flask_app = _app._get_current_object()
         sub_id = sub.id
@@ -146,7 +161,7 @@ def stop_copying():
     sub.stopped_at = datetime.utcnow()
     db.session.commit()
 
-    # Cancel agent's open GTC orders on parent's account
+    # Cancel any of this sub's orders still open on the parent's account
     if sub.agent_private_key:
         flask_app = _app._get_current_object()
         parent_addr = sub.parent_address

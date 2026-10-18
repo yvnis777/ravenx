@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from services import agent_service
+from tests.services.test_copy_service_multi import echo_fills
 
 
 def _mk_state(positions: dict, account_value: float):
@@ -40,8 +41,7 @@ def mock_info():
 def mock_exchange_factory():
     from services import copy_service  # noqa: F401
     exchange = MagicMock()
-    exchange.market_open.return_value = {"status": "ok"}
-    exchange.market_close.return_value = {"status": "ok"}
+    echo_fills(exchange)
     factory = MagicMock(return_value=exchange)
     with patch("services.copy_service.get_exchange", factory):
         yield factory, exchange

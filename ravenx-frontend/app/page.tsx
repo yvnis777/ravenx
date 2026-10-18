@@ -58,7 +58,7 @@ interface Feature {
 const FEATURES: Feature[] = [
   {
     title: 'Guaranteed better entry',
-    desc: 'GTC limit orders sized so your weighted-average entry is always at least as good as the trader you copy. A mathematical invariant, not a heuristic.',
+    desc: 'Limit orders sized so your weighted-average entry is always at least as good as the trader you copy. A mathematical invariant, not a heuristic.',
     highlight: true,
   },
   {
@@ -79,7 +79,7 @@ const FEATURES: Feature[] = [
 const FAQ_ITEMS: { q: string; a: string }[] = [
   {
     q: 'How does the algorithm guarantee a better entry?',
-    a: "RavenX places GTC limit orders calculated so your weighted-average entry is always equal to or better than the trader you're copying. Longs fill at or below their price, shorts at or above. If the price never becomes favorable, no order is placed — the guarantee is never traded away for speed.",
+    a: "RavenX places limit orders calculated so your weighted-average entry is always equal to or better than the trader you're copying. Longs fill at or below their price, shorts at or above. If the price never becomes favorable, no order is placed — the guarantee is never traded away for speed.",
   },
   {
     q: 'How does RavenX trade for me?',

@@ -22,6 +22,10 @@ class Subscription(db.Model):
     # Per-sub high-watermark for max_drawdown_pct check; captured from
     # parent's HL account value at sub start. Not shared across subs.
     peak_equity = db.Column(db.Float, nullable=True)
+    # "New only" copies: {coin: 1 | -1} for positions the target already held
+    # when the copy started. The engine never opens these; a coin is dropped
+    # once the target closes or flips it.
+    held_at_start = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     stopped_at = db.Column(db.DateTime, nullable=True)
     last_polled_at = db.Column(db.DateTime, nullable=True)

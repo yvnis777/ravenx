@@ -22,9 +22,10 @@ This repository is the code RavenX runs, published so the claims above can be ch
 
 ## How the copy algorithm works
 
-- **Better-or-equal entry.** Every increase is placed as a GTC limit order priced so that your weighted-average entry stays **≤ the target's for longs** and **≥ for shorts**. If the price never becomes favorable, no order is placed: the guarantee is never traded for speed.
+- **Better-or-equal entry.** Every increase is placed as a limit order priced so that your weighted-average entry stays **≤ the target's for longs** and **≥ for shorts**. If the price never becomes favorable, no order is placed: the guarantee is never traded for speed. Any part that can't fill immediately is cancelled and retried on the target's next fill, so RavenX always knows exactly what you hold.
 - **Proportional sizing.** `your size = your equity × (target size / target equity) × scaling %`.
 - **Per-fill decisions.** On each target fill, per coin: stop-loss → close · target closed → close · direction flip → close then open · reducing → reduce-only close · increasing at a favorable price → limit order · otherwise skip.
+- **New only, by default.** Positions the trader already held when you started copying are left alone; you copy what they open from then on.
 - **Multiple copies per account.** Each copy tracks its own share of every position and only cancels orders it placed itself.
 
 Details: [`ravenx-hl-backend/services/copy_service.py`](ravenx-hl-backend/services/copy_service.py).

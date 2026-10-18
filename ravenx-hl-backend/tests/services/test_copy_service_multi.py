@@ -32,6 +32,19 @@ def _mk_state(positions: dict, account_value: float):
     }
 
 
+def _fill(sz, px=100.0):
+    """An HL order response reporting `sz` filled at `px`."""
+    return {"status": "ok", "response": {"type": "order", "data": {"statuses": [
+        {"filled": {"totalSz": str(sz), "avgPx": str(px), "oid": 1}}]}}}
+
+
+def echo_fills(exchange, px=100.0):
+    """Make every order fill in full at `px`, like a liquid market would."""
+    exchange.market_open.side_effect = lambda coin, is_buy, sz, *a, **k: _fill(sz, px)
+    exchange.market_close.side_effect = lambda coin, sz=None, *a, **k: _fill(sz, px)
+    exchange.order.side_effect = lambda coin, is_buy, sz, *a, **k: _fill(sz, px)
+
+
 @pytest.fixture
 def mock_info():
     """Patches Info inside copy_service to return scripted user_states."""
@@ -45,9 +58,7 @@ def mock_info():
 def mock_exchange_factory():
     """Returns (factory, exchange_mock). Factory replaces agent_service.get_exchange."""
     exchange = MagicMock()
-    exchange.market_close.return_value = {"status": "ok"}
-    exchange.market_open.return_value = {"status": "ok"}
-    exchange.order.return_value = {"status": "ok"}
+    echo_fills(exchange)
     exchange.bulk_cancel.return_value = {"status": "ok"}
     factory = MagicMock(return_value=exchange)
     with patch("services.copy_service.get_exchange", factory):
@@ -106,6 +117,10 @@ def test_increase_uses_only_this_subs_intended_share(app, mock_info, mock_exchan
         execute_copy(sub_a.id, parent, "0x" + "1" * 64, target, 100.0,
                      {"price_tolerance_pct": -1})  # market
 
+        from services.copy_service import _intended_position
+        assert _intended_position(sub_a.id, "BTC") == pytest.approx((2.0, 100.0))
+        assert _intended_position(sub_b.id, "BTC") == pytest.approx((0.5, 100.0))
+
     exchange.market_open.assert_called_once()
     args, kwargs = exchange.market_open.call_args
     assert args[0] == "BTC"
@@ -145,6 +160,9 @@ def test_close_only_closes_this_subs_share(app, mock_info, mock_exchange_factory
             _mk_state({"BTC": {"szi": 1.5, "entry": 100.0}}, 200),  # HL still has 1.5 (incl other sub)
         ]
         execute_copy(sub_a.id, parent, "0x" + "1" * 64, target, 100.0, {})
+
+        from services.copy_service import _intended_position
+        assert _intended_position(sub_a.id, "BTC") == (0.0, 0.0)
 
     exchange.market_close.assert_called_once()
     args, kwargs = exchange.market_close.call_args

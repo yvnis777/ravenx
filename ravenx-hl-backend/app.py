@@ -59,6 +59,7 @@ def create_app():
         import models.user  # noqa: F401
         import models.nonce  # noqa: F401
         db.create_all()
+        _add_missing_columns()
 
         if not app.config.get("DISABLE_BACKGROUND_WORKERS"):
             _start_services_when_lock_free(app)
@@ -68,6 +69,26 @@ def create_app():
         return {"status": "ok", "hl_env": hl_env.HL_ENV}
 
     return app
+
+
+def _add_missing_columns():
+    """Add columns introduced after a table was first created.
+
+    create_all() only creates missing tables, never missing columns, and there
+    is no Alembic yet. Each entry here is idempotent.
+    """
+    from sqlalchemy import inspect, text
+    from models.subscription import Subscription
+
+    added = [(Subscription.__table__, "held_at_start")]
+    insp = inspect(db.engine)
+    for table, name in added:
+        if name in {c["name"] for c in insp.get_columns(table.name)}:
+            continue
+        col_type = table.c[name].type.compile(dialect=db.engine.dialect)
+        with db.engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {name} {col_type}"))
+        logging.getLogger(__name__).info("Added column %s.%s", table.name, name)
 
 
 # ── One copy engine per host ──────────────────────────────────────────────────

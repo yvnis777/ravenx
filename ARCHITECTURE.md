@@ -1,6 +1,6 @@
 # RavenX — Backend
 
-Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the address of a wallet to copy (the leaderboard is switched off for launch), authorize a limited agent wallet, and mirror that wallet's positions. The RavenX algorithm keeps the follower's average entry price ≤ the target's (for longs) by placing GTC limit orders.
+Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the address of a wallet to copy (the leaderboard is switched off for launch), authorize a limited agent wallet, and mirror that wallet's positions. The RavenX algorithm keeps the follower's average entry price ≤ the target's (for longs) by placing limit orders.
 
 **Non-custodial.** RavenX never holds user funds or private keys. Trading is authorized through a Hyperliquid agent wallet, which can place orders but cannot withdraw.
 
@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (55 tests) |
+| Tests | pytest (75 tests) |
 
 ## Quick Start
 
@@ -86,7 +86,7 @@ ravenx-hl-backend/
 ├── services/
 │   ├── auth_service.py       # EIP-191 verify + JWT issue
 │   ├── agent_service.py      # Agent keypair gen, HL agent + builder-fee verification, Exchange factory
-│   ├── copy_service.py       # Core algorithm (per-sub locked, delta-based, GTC limits)
+│   ├── copy_service.py       # Core algorithm (per-sub locked, delta-based, IOC limits)
 │   ├── trader_service.py     # Leaderboard query + metric computation
 │   └── notification_service.py
 ├── monitoring/
@@ -141,15 +141,19 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 4. Frontend builds the `ApproveAgent` typed data, user signs, frontend submits to `https://api.hyperliquid.xyz/exchange`.
 5. `POST /copy/start` → backend verifies **both** approvals on HL (`extraAgents` and `maxBuilderFee`), then persists the subscription with the agent key.
 6. The WS daemon subscribes to the target. On each fill, the copy engine signs orders with the agent key; they execute on the user's own HL account.
-7. Stop → sub marked inactive, this sub's open GTC orders cancelled. **The agent is not auto-revoked** — the user can revoke it on HL.
+7. Stop → sub marked inactive, any of this sub's open orders cancelled. **The agent is not auto-revoked** — the user can revoke it on HL.
 
 ## Copy Algorithm
 
-**Entry invariant:** each increase places a GTC limit at a weighted-average price keeping the follower's total entry ≤ the target's (longs) or ≥ (shorts).
+**Entry invariant:** each increase places an IOC limit at a weighted-average price keeping the follower's total entry ≤ the target's (longs) or ≥ (shorts).
+
+**Fills, not requests:** every order is IOC, and a sub's intended share records the size and average price HL reports as filled. Whatever didn't fill is re-ordered on the target's next fill. Nothing is left resting on the book, where it could fill later without being recorded.
+
+**New only** (`copy_existing_mode: "none"`, the default): `/copy/start` stores the target's open coins and directions in `subscriptions.held_at_start`. The engine never opens those; a coin is released once the target closes or flips it. If HL can't be read at start, the copy is refused instead of starting without the list.
 
 **Multi-copy:** one user can run N subscriptions on one HL account. Each sub owns an *intended share* per coin (`TrackedPosition`); orders are sized to that sub's delta, never to the account's actual position. Cancels filter by a per-sub cloid prefix, so one sub never touches another's orders.
 
-**Decision tree per coin on fill:** stop-loss → close this sub's share · target closed → close · direction flip → close then open · reducing → reduce-only close of the surplus · increasing at a favorable price → GTC limit · otherwise skip.
+**Decision tree per coin on fill:** stop-loss → close this sub's share · target closed → close · direction flip → close then open · reducing → reduce-only close of the surplus · held at start → skip · increasing at a favorable price → IOC limit · otherwise skip.
 
 **Scaling:** `ideal_szi = my_equity × (target_szi / target_equity) × (scaling_pct / 100)`
 
@@ -175,7 +179,7 @@ The fee rail is kept, dormant: setting `BUILDER_ADDRESS` turns on a **0.03% buil
 - **HL unreachable reads as "not approved"** for both agent and fee checks — we never attach a fee the user didn't authorize.
 - **SQLite throws "database is locked"** when background threads run concurrently. Use PostgreSQL in production.
 - **Dashboard endpoints are intentionally public** — the leaderboard is browseable without login.
-- `db.create_all()` is used in dev — use Alembic for production schema changes.
+- **No Alembic yet.** `db.create_all()` creates missing tables only; columns added later go in `app._add_missing_columns()`, which runs `ALTER TABLE` on boot when they're missing.
 - `risk_params` supports: `stop_loss_pct`, `max_drawdown_pct`, `max_position_usd`, `min_position_usd`, `price_tolerance_pct`, `copy_existing_mode`.
 
 ## Production
