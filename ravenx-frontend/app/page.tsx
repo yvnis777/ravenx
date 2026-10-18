@@ -3,10 +3,11 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/Button'
 import { RavenMark } from '@/components/ui/RavenMark'
+import { GitHubIcon } from '@/components/ui/GitHubIcon'
 import { AddressInput } from '@/components/ui/AddressInput'
 import { api } from '@/lib/api'
 import { ADVERTISED_FEE, FEES_ENABLED, feeRateLabel } from '@/lib/fee'
-import { EXTERNAL_WALLET_FINDERS, LEADERBOARD_ENABLED } from '@/lib/features'
+import { EXTERNAL_WALLET_FINDERS, LEADERBOARD_ENABLED, SOURCE_CODE_URL } from '@/lib/features'
 
 /* Landing page — same terminal system as the app, with room to breathe.
    Every claim here must stay true of the running product: RavenX is
@@ -98,6 +99,10 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
       : "Nothing. RavenX charges no fee on the trades it copies for you — no per-order fee, no subscription, no profit share. Other copy-trading bots charge per order: Based 0.025%, Phantom 0.05%, Dextrabot 0.055%. Hyperliquid's own trading fees apply as usual.",
   },
   {
+    q: 'Can I check what the code does?',
+    a: 'Yes. RavenX is open source under the AGPL-3.0 licence: the code that places your trades is public on GitHub, exactly as it runs on ravenx.app. Anyone can read how orders are sized, priced and cancelled.',
+  },
+  {
     q: 'Can I stop at any time?',
     a: 'Instantly. One click stops the copying and cancels the open orders RavenX placed. Your positions stay exactly as they are — nothing is force-closed — and you can revoke the agent on Hyperliquid whenever you like.',
   },
@@ -119,6 +124,10 @@ const TRUST = [
   {
     title: 'No lock-in',
     desc: 'Stop with one click. Open positions remain yours to manage.',
+  },
+  {
+    title: 'Open source',
+    desc: 'Every line that trades for you is public on GitHub. Read it before you trust it.',
   },
 ]
 
@@ -198,9 +207,19 @@ export default function LandingPage() {
           <span className="text-fg">Raven</span>
           <span className="text-accent">X</span>
         </span>
+        <a
+          href={SOURCE_CODE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto mr-5 flex items-center gap-1.5 text-[13px] text-faint transition-colors hover:text-fg"
+        >
+          <GitHubIcon size={15} />
+          <span className="hidden sm:inline">GitHub</span>
+          <span className="sm:hidden">Source</span>
+        </a>
         <Link
           href="/dashboard"
-          className="ml-auto text-[13px] text-faint transition-colors hover:text-fg"
+          className="text-[13px] text-faint transition-colors hover:text-fg"
         >
           Open app →
         </Link>
@@ -228,7 +247,16 @@ export default function LandingPage() {
           {LEADERBOARD_ENABLED
             ? 'No signup. Browse the leaderboard without connecting a wallet.'
             : 'Paste any Hyperliquid wallet. No signup.'}{' '}
-          Your funds never leave your own account.
+          Your funds never leave your own account, and the code is{' '}
+          <a
+            href={SOURCE_CODE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-fg underline underline-offset-2 hover:text-accent"
+          >
+            open source
+          </a>
+          .
         </p>
 
         {LEADERBOARD_ENABLED ? (
@@ -261,7 +289,7 @@ export default function LandingPage() {
         )}
 
         {/* Stat strip */}
-        <div className="mt-14 flex flex-wrap items-center justify-center gap-px border border-line bg-line">
+        <div className={`mt-14 grid w-full max-w-2xl grid-cols-1 gap-px border border-line bg-line text-center ${LEADERBOARD_ENABLED ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
           {LEADERBOARD_ENABLED && (
             <div className="bg-panel px-6 py-3">
               <div className="text-xl font-semibold text-fg">
@@ -284,6 +312,20 @@ export default function LandingPage() {
               We never hold your funds
             </div>
           </div>
+          <a
+            href={SOURCE_CODE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group bg-panel px-6 py-3 transition-colors hover:bg-raised"
+          >
+            <div className="flex items-center justify-center gap-2 text-xl font-semibold text-fg">
+              <GitHubIcon size={18} className="text-muted group-hover:text-fg" />
+              Open source
+            </div>
+            <div className="mt-0.5 text-[10px] uppercase tracking-wider text-faint">
+              Read the code on GitHub
+            </div>
+          </a>
         </div>
       </section>
 
@@ -348,7 +390,7 @@ export default function LandingPage() {
 
       {/* ─── Trust strip ─── */}
       <section className="border-y border-line px-6 py-12">
-        <div className="mx-auto grid max-w-4xl grid-cols-1 gap-8 text-center sm:grid-cols-3">
+        <div className="mx-auto grid max-w-5xl grid-cols-1 gap-8 text-center sm:grid-cols-2 lg:grid-cols-4">
           {TRUST.map((t) => (
             <div key={t.title}>
               <div className="mb-1 text-[13px] font-medium text-fg">{t.title}</div>
@@ -412,7 +454,9 @@ export default function LandingPage() {
           <span className="text-fg">Raven</span>
           <span className="text-accent">X</span>
         </span>
-        <p className="mt-1.5 text-[11px] text-faint">Built for Hyperliquid traders</p>
+        <p className="mt-1.5 text-[11px] text-faint">
+          Built for Hyperliquid traders · Open source under AGPL-3.0
+        </p>
         <div className="mt-3 flex justify-center gap-4">
           <Link
             href="/terms"
@@ -426,6 +470,15 @@ export default function LandingPage() {
           >
             Privacy Policy
           </Link>
+          <a
+            href={SOURCE_CODE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-[11px] text-faint transition-colors hover:text-muted"
+          >
+            <GitHubIcon size={12} />
+            GitHub
+          </a>
         </div>
       </footer>
     </div>

@@ -14,3 +14,6 @@ export const EXTERNAL_WALLET_FINDERS = [
   { label: 'Hyperdash', href: 'https://hyperdash.info' },
   { label: 'Hypurrscan', href: 'https://hypurrscan.io' },
 ] as const
+
+/** The public repository: the exact code that runs ravenx.app (AGPL-3.0). */
+export const SOURCE_CODE_URL = 'https://github.com/yvnis777/ravenx'

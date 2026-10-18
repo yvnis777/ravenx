@@ -31,6 +31,17 @@ describe('LandingPage', () => {
     expect(link).toHaveAttribute('href', '/dashboard')
   })
 
+  it('links to the public GitHub repo in a new tab', () => {
+    const { container } = render(<LandingPage />)
+    const links = container.querySelectorAll('a[href="https://github.com/yvnis777/ravenx"]')
+    expect(links.length).toBeGreaterThanOrEqual(3)
+    links.forEach((link) => {
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+    })
+    expect(screen.getAllByText(/open source/i).length).toBeGreaterThan(0)
+  })
+
   it('advertises copying as free and never quotes 0.03%', () => {
     const { container } = render(<LandingPage />)
     expect(screen.getAllByText('0%').length).toBeGreaterThan(0)
