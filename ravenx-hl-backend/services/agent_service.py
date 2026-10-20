@@ -119,12 +119,15 @@ def verify_agent_approved(parent_address: str, agent_address: str) -> bool:
     except Exception as e:
         logger.warning("verify_agent_approved: HL API error: %s", e)
         return False
-    agents = data.get("extraAgents", []) or []
+    # HL returns a bare list: [{"name", "address", "validUntil"}, ...]
+    if not isinstance(data, list):
+        logger.warning("verify_agent_approved: unexpected response %r", data)
+        return False
     target = agent_address.lower()
-    for a in agents:
-        if str(a.get("address", "")).lower() == target:
-            return True
-    return False
+    return any(
+        isinstance(a, dict) and str(a.get("address", "")).lower() == target
+        for a in data
+    )
 
 
 def get_max_builder_fee(parent_address: str, builder_address: str) -> int:

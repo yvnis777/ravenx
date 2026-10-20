@@ -35,15 +35,29 @@ def test_pending_entries_expire(monkeypatch):
         agent_service.pop_pending_pkey(addr, "0xparent")
 
 
+# HL's extraAgents returns a bare list (checked against mainnet, 2026-10-20).
+def _agents(*addresses):
+    return [{"name": f"ravenx-{i}", "address": a, "validUntil": 1800000000000}
+            for i, a in enumerate(addresses)]
+
+
 def test_verify_agent_approved_returns_true_when_in_extra_agents():
-    fake_response = {"extraAgents": [{"address": "0xagent", "name": "ravenx-1"}]}
-    with patch.object(agent_service, "_info_post", return_value=fake_response):
+    with patch.object(agent_service, "_info_post", return_value=_agents("0xother", "0xAgent")):
         assert agent_service.verify_agent_approved("0xparent", "0xagent") is True
 
 
 def test_verify_agent_approved_false_when_missing():
-    fake_response = {"extraAgents": [{"address": "0xother", "name": "x"}]}
-    with patch.object(agent_service, "_info_post", return_value=fake_response):
+    with patch.object(agent_service, "_info_post", return_value=_agents("0xother")):
+        assert agent_service.verify_agent_approved("0xparent", "0xagent") is False
+
+
+def test_verify_agent_approved_false_when_no_agents():
+    with patch.object(agent_service, "_info_post", return_value=[]):
+        assert agent_service.verify_agent_approved("0xparent", "0xagent") is False
+
+
+def test_unexpected_extra_agents_shape_reads_as_not_approved():
+    with patch.object(agent_service, "_info_post", return_value="oops"):
         assert agent_service.verify_agent_approved("0xparent", "0xagent") is False
 
 
