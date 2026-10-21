@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (95 tests) |
+| Tests | pytest (98 tests) |
 
 ## Quick Start
 
@@ -119,6 +119,7 @@ The leaderboard is built from our own scanner — no dependency on any HL leader
 | POST | `/copy/start` | JWT | Start copying (verifies agent + builder fee on HL) |
 | POST | `/copy/stop` | JWT | Stop copying; cancels this sub's open orders |
 | GET | `/copy/subscriptions` | JWT | My subscriptions |
+| GET | `/copy/positions` | JWT | Each active copy's recorded share per coin (database only; feeds the My Copies dashboard) |
 | PATCH | `/copy/subscriptions/<id>` | JWT | Update scaling_pct / risk_params / target_name |
 | GET | `/notifications` | JWT | Recent copy events |
 | GET | `/notifications/unread-count` | JWT | Unread badge count |

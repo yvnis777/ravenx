@@ -66,7 +66,7 @@ export function TraderMetrics({ trader, address, period }: TraderMetricsProps) {
   return (
     <div className="flex flex-col">
       <div className="grid grid-cols-2 gap-3 border-b border-line p-3 sm:grid-cols-4 xl:grid-cols-2">
-        <StatTile label="Perp equity" value={fmtUsdFull(trader.perp_equity)} />
+        <StatTile label="Equity" value={fmtUsdFull(trader.perp_equity)} />
         <StatTile label="uPnL" value={fmtUsd(trader.upnl)} tone={tone(trader.upnl)} />
         <StatTile label={`${periodLabel} PnL`} value={fmtUsd(pnl?.pnl)} tone={tone(pnl?.pnl)} />
         <StatTile label="Growth" value={fmtPct(pnl?.growth)} tone={tone(pnl?.growth)} />

@@ -217,6 +217,26 @@ def list_subscriptions():
     return jsonify([s.to_dict() for s in subs])
 
 
+@copy_bp.route("/positions", methods=["GET"])
+@jwt_required()
+def list_positions():
+    """Each active copy's recorded share per coin — what RavenX opened for it.
+    Read from the database only; the live account comes from HL directly."""
+    from models.position import TrackedPosition
+    parent = get_jwt_identity().lower()
+    rows = (
+        db.session.query(TrackedPosition)
+        .join(Subscription, Subscription.id == TrackedPosition.subscription_id)
+        .filter(Subscription.parent_address == parent, Subscription.is_active.is_(True))
+        .all()
+    )
+    return jsonify([
+        {"subscription_id": p.subscription_id, "coin": p.coin,
+         "szi": p.szi, "entry_px": p.entry_px}
+        for p in rows
+    ])
+
+
 @copy_bp.route("/subscriptions/<int:sub_id>", methods=["PATCH"])
 @jwt_required()
 def update_subscription(sub_id: int):

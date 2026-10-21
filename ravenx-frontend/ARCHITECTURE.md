@@ -63,7 +63,7 @@ app/
 │   ├── cohorts/[name]/page.tsx     # Cohort detail
 │   └── terms, privacy
 └── (protected)/                    # Layout redirects to / when unauthenticated
-    └── copies/page.tsx             # My Copies table
+    └── copies/page.tsx             # My Copies dashboard: account, positions by copy, copies, activity
 ```
 
 ## Data Architecture
@@ -75,6 +75,8 @@ app/
   - `useFills` → `userFillsByTime`, paged. Win rate, trade count and long/short split come from here. **HL keeps only a wallet's newest 10,000 fills**, so for busy wallets these cover hours, not the period; `TraderMetrics` says so via `fillsCoverStart`.
   - Periods are 1D / 7D / 30D / All — `portfolio` has no 90-day window.
 - **Subscriptions**: backend (`/copy/*`) via `useSubscriptions`.
+- **My Copies dashboard**: the user's own account is `useTrader(own address)`, read live from HL. `useCopyPositions` reads each copy's recorded share (`/copy/positions`), and `lib/attribution.ts` matches the two: per position, which copies hold part of it and what's manual; shares missing on HL are flagged. Activity is the notifications feed.
+- **Equity is mode-aware** (`lib/hyperliquid.ts` → `fetchAccountEquity`): in HL's unified account the perps state's `accountValue` is only collateral held for positions; equity is the spot USDC total. `useTrader` uses it, so the trader page and the dashboard both show real equity. The backend reads it the same way.
 
 ## Copy Flow
 

@@ -61,6 +61,36 @@ export async function fetchUserState(address: string): Promise<HLUserState> {
   return hlPost({ type: 'clearinghouseState', user: address })
 }
 
+export interface HLSpotState {
+  balances: { coin: string; total: string }[]
+}
+
+/**
+ * HL account modes where spot and perps share one USDC balance. For these the
+ * perps state's accountValue is only the collateral held for open positions;
+ * the real equity is the spot USDC total (uPnL included). The backend reads
+ * equity the same way (copy_service._equity).
+ */
+const SHARED_COLLATERAL_MODES = ['unifiedAccount', 'portfolioMargin']
+
+/** The USDC backing this account's perps, given its mode and both states. */
+export function accountEquity(mode: unknown, perps: HLUserState, spot?: HLSpotState): number {
+  if (typeof mode === 'string' && SHARED_COLLATERAL_MODES.includes(mode)) {
+    return (spot?.balances ?? [])
+      .filter((b) => b.coin === 'USDC')
+      .reduce((sum, b) => sum + parseFloat(b.total), 0)
+  }
+  return parseFloat(perps.marginSummary.accountValue)
+}
+
+/** Equity for any account mode; asks HL for the spot state only when it matters. */
+export async function fetchAccountEquity(address: string, perps: HLUserState): Promise<number> {
+  const mode = await hlPost({ type: 'userAbstraction', user: address })
+  const shared = typeof mode === 'string' && SHARED_COLLATERAL_MODES.includes(mode)
+  const spot = shared ? await hlPost({ type: 'spotClearinghouseState', user: address }) : undefined
+  return accountEquity(mode, perps, spot)
+}
+
 /** One portfolio window: [timestamp ms, value] pairs, as HL sends them. */
 export interface HLPortfolioWindow {
   accountValueHistory: [number, string][]

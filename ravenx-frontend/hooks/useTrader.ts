@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchUserState } from '@/lib/hyperliquid'
+import { fetchAccountEquity, fetchUserState } from '@/lib/hyperliquid'
 import type { OpenPosition } from '@/types'
 
 /** What HL's account state gives us live. Period figures come from usePnlHistory / useFills. */
@@ -34,7 +34,8 @@ export function useTrader(address: string) {
       return {
         address: addr,
         display_name: null,
-        perp_equity: parseFloat(state.marginSummary.accountValue),
+        // Unified accounts keep their USDC in the spot state; see accountEquity.
+        perp_equity: await fetchAccountEquity(addr, state),
         upnl: open_positions.reduce((sum, p) => sum + p.upnl, 0),
         open_positions,
       }
