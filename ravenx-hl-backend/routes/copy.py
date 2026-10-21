@@ -96,9 +96,8 @@ def start_copying():
     # Snapshot peak equity from parent's HL account
     peak_equity = None
     try:
-        from services.copy_service import _get_info
-        state = _get_info().user_state(parent)
-        peak_equity = float(state["marginSummary"]["accountValue"])
+        from services.copy_service import _get_state
+        _, peak_equity = _get_state(parent)
     except Exception:
         pass
 

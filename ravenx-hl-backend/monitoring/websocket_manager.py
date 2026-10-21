@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 URI = hl_env.WS_URL
 RECONNECT_BASE = 2
 RECONNECT_MAX = 30
+# HL closes a connection that hasn't *sent* anything for 60s — protocol-level
+# WS pings don't count — so we send its own {"method": "ping"} well inside that.
+APP_PING_SECONDS = 50
 
 
 class WebSocketManager:
@@ -114,6 +117,11 @@ class WebSocketManager:
         async for raw in ws:
             await self._queue.put(raw)
 
+    async def _keepalive(self, ws):
+        while True:
+            await asyncio.sleep(APP_PING_SECONDS)
+            await ws.send(json.dumps({"method": "ping"}))
+
     async def _processor(self):
         from monitoring.copy_engine import handle_fill
         while True:
@@ -201,7 +209,11 @@ class WebSocketManager:
                     for wallet in targets:
                         await self._subscribe_one(wallet)
 
-                    await self._reader(ws)
+                    keepalive = asyncio.create_task(self._keepalive(ws))
+                    try:
+                        await self._reader(ws)
+                    finally:
+                        keepalive.cancel()
 
             except (websockets.ConnectionClosed, ConnectionError) as e:
                 logger.warning("Disconnected: %s", e)

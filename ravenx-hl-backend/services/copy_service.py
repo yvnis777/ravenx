@@ -23,6 +23,7 @@ import logging
 import math
 import secrets
 import threading
+import time
 
 from extensions import db
 from services import agent_service
@@ -222,9 +223,38 @@ def _cancel_open_orders(exchange, account_address: str, coin: str, sub_id: int):
                        sub_id, account_address, coin, e)
 
 
+# HL account modes where spot and perps share one USDC balance. For these the
+# perps state's accountValue is only the collateral held for open positions
+# (a target with $607k read as $200k on 2026-10-21, tripling copy sizes), and
+# the real equity is the USDC total in the spot state, uPnL included.
+SHARED_COLLATERAL_MODES = {"unifiedAccount", "portfolioMargin"}
+_MODE_TTL_SECONDS = 600
+_modes: dict[str, tuple[str, float]] = {}
+
+
+def _abstraction(address: str) -> str:
+    """The account's balance mode (userAbstraction), cached for a few minutes."""
+    hit = _modes.get(address)
+    if hit and time.time() - hit[1] < _MODE_TTL_SECONDS:
+        return hit[0]
+    mode = _get_info().post("/info", {"type": "userAbstraction", "user": address})
+    if not isinstance(mode, str):
+        raise ValueError(f"unexpected userAbstraction response {mode!r}")
+    _modes[address] = (mode, time.time())
+    return mode
+
+
+def _equity(address: str, perps_state: dict) -> float:
+    """What backs this account's perps: shared USDC, or the perps balance."""
+    if _abstraction(address) in SHARED_COLLATERAL_MODES:
+        spot = _get_info().spot_user_state(address)
+        return sum(float(b["total"]) for b in spot.get("balances", []) if b["coin"] == "USDC")
+    return float(perps_state["marginSummary"]["accountValue"])
+
+
 def _get_state(address: str) -> tuple[dict, float]:
     state = _get_info().user_state(address)
-    account_value = float(state["marginSummary"]["accountValue"])
+    account_value = _equity(address, state)
     positions = {}
     for p in state["assetPositions"]:
         pos = p["position"]

@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (88 tests) |
+| Tests | pytest (95 tests) |
 
 ## Quick Start
 
@@ -156,7 +156,7 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 **Decision tree per coin on fill:** stop-loss → close this sub's share · target closed → close · direction flip → close then open · reducing → reduce-only close of the surplus · held at start → skip · increasing at a favorable price → IOC limit · otherwise skip.
 
-**Scaling:** `ideal_szi = my_equity × (target_szi / target_equity) × (scaling_pct / 100)`
+**Scaling:** `ideal_szi = my_equity × (target_szi / target_equity) × (scaling_pct / 100)`, with equity read per account mode (see Key Gotchas).
 
 **Concurrency:** a `threading.Lock` per subscription prevents double execution on rapid fills.
 
@@ -171,6 +171,8 @@ The fee rail is kept, dormant: setting `BUILDER_ADDRESS` turns on a **0.03% buil
 - **Exactly one backend process, ever.** The copy engine runs inside the web process, so a second process copies every fill again (double positions, real money). Guards: `gunicorn.conf.py` refuses `workers > 1` and sets `preload_app = False`; `app._try_engine_lock` holds an exclusive flock so a second process on the host *waits* (it doesn't give up — on a graceful reload the new worker boots before the old exits). Run with `gunicorn -c gunicorn.conf.py "app:create_app()"`.
 - **The HL `Info` client is built lazily** (`copy_service._get_info()`). Never construct SDK clients at import time — a rate-limited HL made the module unimportable and took the backend down on boot.
 - **HL metadata is cached** in `agent_service._get_metas()`. `Exchange(...)` fetches perp + spot meta on every construction, and we build one per copy execution — without the cache that's two extra calls per fill. Build every `Info` through `agent_service.make_info()`.
+- **Equity depends on the account's mode** (`copy_service._equity`). In HL's unified account (and portfolio margin), spot and perps share one USDC balance: the perps state's `accountValue` is only the collateral held for open positions, and the real equity is the spot state's USDC `total` (uPnL included). Reading `accountValue` made a unified follower look like $0 (nothing copied) and understated unified targets up to 3× (copies too big). The mode comes from `userAbstraction`, cached 10 min; only `disabled` and `unifiedAccount` occur on mainnet.
+- **HL drops a WebSocket that sends nothing for 60s**; protocol-level pings don't count. The WS daemon sends HL's own `{"method": "ping"}` every 50s.
 - **The SDK never sees spot tokens** (`NO_SPOT_META`). SDK 0.22.0 indexes HL's spot tokens by list position, which mainnet's spot list broke: `Info()` raised `IndexError`, taking down every read and every order (2026-10-21). RavenX trades perps only. SDK 0.24.0 fixes the parsing, if spot is ever needed.
 - **Hyperliquid rate limits are strict.** Max ~4 concurrent workers for `user_state`; startup jobs are staggered; never fire all background jobs at once on restart.
 - **Agent private keys are encrypted at rest** (`models/encrypted.py`, `EncryptedText` column). The master key lives only in `AGENT_KEY_ENCRYPTION_KEY`; the app refuses to boot without a valid one. A stolen DB alone yields no keys — but an agent can still trade (never withdraw), so a stolen DB *plus* env is a real loss: keep the key out of DB backups.

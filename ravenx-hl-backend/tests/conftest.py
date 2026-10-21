@@ -34,3 +34,12 @@ def fake_hl_meta(monkeypatch):
         {"name": "DOGE", "szDecimals": 0},
     ]}
     monkeypatch.setattr(agent_service, "_get_metas", lambda: (meta, {"universe": [], "tokens": []}))
+
+
+@pytest.fixture(autouse=True)
+def standard_accounts(monkeypatch):
+    """Accounts are in standard mode (separate spot/perps balances) unless a
+    test says otherwise — the mocked Info doesn't answer userAbstraction."""
+    from services import copy_service
+    monkeypatch.setattr(copy_service, "_abstraction", lambda address: "disabled")
+    copy_service._modes.clear()
