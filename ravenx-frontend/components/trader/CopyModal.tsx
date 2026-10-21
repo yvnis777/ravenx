@@ -106,7 +106,7 @@ interface CopyModalProps {
 }
 
 export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, isConnected, isSigningIn, authError, login } = useAuth()
   const { open } = useAppKit()
   const queryClient = useQueryClient()
   const { data: subscriptions = [] } = useSubscriptions()
@@ -461,16 +461,35 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
 
           {!isAuthenticated ? (
             <div className="flex flex-col items-center gap-3 py-6">
-              <p className="text-xs text-muted">Connect your wallet to start copy-trading.</p>
-              <Button
-                size="sm"
-                onClick={() => {
-                  open()
-                  onClose()
-                }}
-              >
-                Connect wallet
-              </Button>
+              {isConnected ? (
+                <>
+                  <p className="text-xs text-muted">
+                    Sign in with your wallet to start copy-trading. It&apos;s a free signature,
+                    not a transaction.
+                  </p>
+                  <Button size="sm" disabled={isSigningIn} onClick={() => login().catch(() => {})}>
+                    {isSigningIn ? 'Check your wallet…' : 'Sign in'}
+                  </Button>
+                  {authError && !isSigningIn && (
+                    <p role="alert" className="text-center text-[11px] text-warn">
+                      {authError}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted">Connect your wallet to start copy-trading.</p>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      open()
+                      onClose()
+                    }}
+                  >
+                    Connect wallet
+                  </Button>
+                </>
+              )}
             </div>
           ) : activeSub && !editing ? (
             <>

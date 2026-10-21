@@ -36,9 +36,22 @@ interface TraderHeaderProps {
 }
 
 export function TraderHeader({ trader, onBack, onCopy }: TraderHeaderProps) {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, isConnected, isSigningIn, authError, login } = useAuth()
   const { open } = useAppKit()
   const [copied, setCopied] = useState(false)
+
+  // Connected but not signed in is its own state: ask for the sign-in
+  // signature, not the wallet picker (which only shows the account).
+  async function handleCopy() {
+    if (isAuthenticated) return onCopy()
+    if (!isConnected) return open()
+    try {
+      await login()
+      onCopy()
+    } catch {
+      /* authError is shown under the button */
+    }
+  }
 
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -69,9 +82,19 @@ export function TraderHeader({ trader, onBack, onCopy }: TraderHeaderProps) {
         {copied ? 'copied ✓' : 'copy'}
       </button>
 
-      <Button size="sm" onClick={() => (isAuthenticated ? onCopy() : open())} className="ml-1">
-        Copy Trade
-      </Button>
+      <div className="relative ml-1">
+        <Button size="sm" onClick={handleCopy} disabled={isSigningIn}>
+          {isSigningIn ? 'Check your wallet…' : 'Copy Trade'}
+        </Button>
+        {authError && !isAuthenticated && !isSigningIn && (
+          <p
+            role="alert"
+            className="absolute right-0 top-full z-10 mt-1 w-64 text-right text-[11px] text-warn"
+          >
+            {authError}
+          </p>
+        )}
+      </div>
     </div>
   )
 }

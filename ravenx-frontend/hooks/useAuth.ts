@@ -1,6 +1,6 @@
 // hooks/useAuth.ts
 'use client'
-import { useCallback, useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAccount, useChainId, useDisconnect, useSignMessage, useSwitchChain } from 'wagmi'
 import { api } from '@/lib/api'
 
@@ -36,6 +36,20 @@ function describeAuthError(err: unknown): string {
   return e?.shortMessage ?? e?.message ?? 'Sign-in failed.'
 }
 
+// One sign-in at a time for the whole page. Many components call useAuth();
+// each used to start its own sign-in, stacking signature prompts in the
+// wallet until it dropped them.
+let inflight: Promise<string> | null = null
+// The address auto sign-in was last tried for — once per connection, not
+// once per component.
+let autoTriedFor: string | null = null
+
+/** Test hook: forget page-wide sign-in state. */
+export function resetSignInState() {
+  inflight = null
+  autoTriedFor = null
+}
+
 export function useAuth() {
   const { address, isConnected, isReconnecting } = useAccount()
   const { disconnectAsync } = useDisconnect()
@@ -55,7 +69,6 @@ export function useAuth() {
     }
     return null
   })
-  const loginAttempted = useRef(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
 
@@ -64,7 +77,7 @@ export function useAuth() {
     function onStorage(e: StorageEvent) {
       if (e.key === 'ravenx_token') {
         setToken(e.newValue)
-        if (!e.newValue) loginAttempted.current = false
+        if (!e.newValue) autoTriedFor = null
       }
     }
     // Listen for both cross-tab storage events and same-tab dispatched events
@@ -75,7 +88,7 @@ export function useAuth() {
       const current = localStorage.getItem('ravenx_token')
       if (current !== token) {
         setToken(current)
-        if (!current) loginAttempted.current = false
+        if (!current) autoTriedFor = null
       }
     }, 2000)
 
@@ -90,22 +103,28 @@ export function useAuth() {
     setIsSigningIn(true)
     setAuthError(null)
     try {
-      await ensureCorrectChain()
-      const { data } = await api.get<{ nonce: string; message: string }>(
-        `/auth/nonce?address=${address}`
-      )
-      const signature = await withTimeout(
-        signMessageAsync({ message: data.message }),
-        SIGN_TIMEOUT_MS,
-        'No response from your wallet. Open it and check for a pending signature request.',
-      )
-      const { data: auth } = await api.post<{ access_token: string }>('/auth/verify', {
-        address,
-        signature,
+      // Join a sign-in already in progress rather than prompting again.
+      inflight ??= (async () => {
+        await ensureCorrectChain()
+        const { data } = await api.get<{ nonce: string; message: string }>(
+          `/auth/nonce?address=${address}`
+        )
+        const signature = await withTimeout(
+          signMessageAsync({ message: data.message }),
+          SIGN_TIMEOUT_MS,
+          'No response from your wallet. Open it and check for a pending signature request.',
+        )
+        const { data: auth } = await api.post<{ access_token: string }>('/auth/verify', {
+          address,
+          signature,
+        })
+        localStorage.setItem('ravenx_token', auth.access_token)
+        window.dispatchEvent(new StorageEvent('storage', { key: 'ravenx_token', newValue: auth.access_token }))
+        return auth.access_token
+      })().finally(() => {
+        inflight = null
       })
-      localStorage.setItem('ravenx_token', auth.access_token)
-      window.dispatchEvent(new StorageEvent('storage', { key: 'ravenx_token', newValue: auth.access_token }))
-      setToken(auth.access_token)
+      setToken(await inflight)
     } catch (err) {
       setAuthError(describeAuthError(err))
       throw err
@@ -114,15 +133,16 @@ export function useAuth() {
     }
   }, [address, signMessageAsync, ensureCorrectChain])
 
-  // Auto-login when wallet is connected but no valid token
+  // Auto-login when wallet is connected but no valid token — once per
+  // connection for the whole page, however many components use this hook.
   useEffect(() => {
-    if (isConnected && address && !token && !loginAttempted.current) {
-      loginAttempted.current = true
+    if (isConnected && address && !token && autoTriedFor !== address) {
+      autoTriedFor = address
       // A failure is surfaced via authError; the user retries explicitly.
       login().catch(() => {})
     }
     if (!isConnected) {
-      loginAttempted.current = false
+      autoTriedFor = null
     }
   }, [isConnected, address, token, login])
 

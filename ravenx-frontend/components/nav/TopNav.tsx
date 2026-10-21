@@ -22,7 +22,7 @@ const NAV_ITEMS = [
 export function TopNav() {
   const pathname = usePathname()
   const router = useRouter()
-  const { address, isConnected, isAuthenticated, logout } = useAuth()
+  const { address, isConnected, isAuthenticated, isSigningIn, login, logout } = useAuth()
   const { open } = useAppKit()
   const [pendingHref, setPendingHref] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -104,13 +104,19 @@ export function TopNav() {
 
         <NotificationDropdown isAuthenticated={isAuthenticated} />
 
+        {isConnected && address && !isAuthenticated && (
+          <Button size="sm" disabled={isSigningIn} onClick={() => login().catch(() => {})}>
+            {isSigningIn ? 'Check your wallet…' : 'Sign in'}
+          </Button>
+        )}
+
         {isConnected && address ? (
           <Button
             variant="secondary"
             size="sm"
             onClick={() => logout()}
             className="num group"
-            title={isAuthenticated ? 'Click to disconnect' : 'Session expired — click to disconnect'}
+            title={isAuthenticated ? 'Click to disconnect' : 'Not signed in — click to disconnect'}
           >
             <span className={`group-hover:hidden ${!isAuthenticated ? 'text-warn' : ''}`}>
               {truncateAddress(address)}

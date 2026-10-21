@@ -1,7 +1,7 @@
 // __tests__/hooks/useAuth.test.tsx
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useAuth, SIGN_TIMEOUT_MS } from '@/hooks/useAuth'
+import { useAuth, SIGN_TIMEOUT_MS, resetSignInState } from '@/hooks/useAuth'
 
 // Mock wagmi hooks
 vi.mock('wagmi', () => ({
@@ -29,6 +29,7 @@ vi.mock('@/lib/api', () => ({
 describe('useAuth', () => {
   beforeEach(() => {
     localStorage.clear()
+    resetSignInState()
   })
 
   it('isAuthenticated is false when no token in localStorage', () => {
@@ -116,5 +117,39 @@ describe('useAuth', () => {
     await act(async () => { await result.current.login() })
     expect(result.current.authError).toBeNull()
     expect(localStorage.getItem('ravenx_token')).toBe('jwt-token-xyz')
+  })
+})
+
+describe('useAuth across components', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    resetSignInState()
+    vi.clearAllMocks()
+    const { useAccount, useSignMessage } = await import('wagmi')
+    vi.mocked(useAccount).mockReturnValue({ address: '0xabc', isConnected: true } as any)
+    vi.mocked(useSignMessage).mockReturnValue({
+      signMessageAsync: vi.fn(() => new Promise(() => {})),   // prompt left open
+    } as any)
+  })
+
+  it('several components auto-signing in ask the wallet only once', async () => {
+    const { api } = await import('@/lib/api')
+    await act(async () => {
+      renderHook(() => useAuth())   // TopNav
+      renderHook(() => useAuth())   // TraderHeader
+      renderHook(() => useAuth())   // useSubscriptions
+    })
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('an explicit login while auto sign-in is pending reuses the same request', async () => {
+    const { api } = await import('@/lib/api')
+    let header!: { current: ReturnType<typeof useAuth> }
+    await act(async () => {
+      renderHook(() => useAuth())
+      header = renderHook(() => useAuth()).result
+    })
+    await act(async () => { header.current.login().catch(() => {}) })
+    expect(api.get).toHaveBeenCalledTimes(1)
   })
 })
