@@ -16,3 +16,15 @@ describe('LEADERBOARD_ENABLED', () => {
     expect(await load('1')).toBe(true)
   })
 })
+
+describe('EXTERNAL_WALLET_FINDERS', () => {
+  it('lists Dextrabot second, right after the Hyperliquid leaderboard', async () => {
+    vi.resetModules()
+    const { EXTERNAL_WALLET_FINDERS } = await import('@/lib/features')
+    expect(EXTERNAL_WALLET_FINDERS.map((f) => f.label).slice(0, 2)).toEqual([
+      'Hyperliquid leaderboard',
+      'Dextrabot',
+    ])
+    expect(EXTERNAL_WALLET_FINDERS[1].href).toBe('https://app.dextrabot.com/discover-wallets')
+  })
+})

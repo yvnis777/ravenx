@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useAppKit } from '@reown/appkit/react'
 import { Button } from '@/components/ui/Button'
+import { CopyIcon } from '@/components/ui/CopyIcon'
 import { getIdenticonData } from '@/lib/identicon'
 import type { Trader } from '@/types'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -76,10 +77,13 @@ export function TraderHeader({ trader, onBack, onCopy }: TraderHeaderProps) {
           setCopied(true)
           setTimeout(() => setCopied(false), 2000)
         }}
-        className="num text-[11px] text-faint transition-colors hover:text-muted"
-        title="Copy full address"
+        className={`flex h-[22px] w-[22px] items-center justify-center rounded transition-colors hover:bg-raised ${
+          copied ? 'text-accent' : 'text-faint hover:text-muted'
+        }`}
+        title={copied ? 'Copied' : 'Copy full address'}
+        aria-label={copied ? 'Address copied' : 'Copy full address'}
       >
-        {copied ? 'copied ✓' : 'copy'}
+        <CopyIcon copied={copied} />
       </button>
 
       <div className="relative ml-1">

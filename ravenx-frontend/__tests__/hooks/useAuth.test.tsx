@@ -142,6 +142,20 @@ describe('useAuth across components', () => {
     expect(api.get).toHaveBeenCalledTimes(1)
   })
 
+  it('two copies of the module (as the production bundle has) still sign in once', async () => {
+    const { api } = await import('@/lib/api')
+    vi.resetModules()
+    const copyA = (await import('@/hooks/useAuth')).useAuth
+    vi.resetModules()
+    const copyB = (await import('@/hooks/useAuth')).useAuth
+    expect(copyA).not.toBe(copyB)
+    await act(async () => {
+      renderHook(() => copyA())   // e.g. TopNav's chunk
+      renderHook(() => copyB())   // e.g. the trader page's chunk
+    })
+    expect(api.get).toHaveBeenCalledTimes(1)
+  })
+
   it('an explicit login while auto sign-in is pending reuses the same request', async () => {
     const { api } = await import('@/lib/api')
     let header!: { current: ReturnType<typeof useAuth> }

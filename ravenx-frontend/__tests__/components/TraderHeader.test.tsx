@@ -14,6 +14,9 @@ const auth = {
 }
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => auth }))
 
+const copyToClipboard = vi.fn()
+vi.mock('@/lib/clipboard', () => ({ copyToClipboard: (t: string) => copyToClipboard(t) }))
+
 const trader = { address: '0x' + 'd'.repeat(40), display_name: null }
 
 function renderHeader() {
@@ -71,5 +74,17 @@ describe('TraderHeader Copy Trade', () => {
     auth.authError = 'You rejected the signature request in your wallet.'
     renderHeader()
     expect(screen.getByRole('alert')).toHaveTextContent(/rejected the signature/)
+  })
+})
+
+describe('TraderHeader address copy', () => {
+  it('is an icon button that copies the full address and confirms', () => {
+    renderHeader()
+    const button = screen.getByRole('button', { name: 'Copy full address' })
+    expect(button).not.toHaveTextContent(/copy/i)        // icon only, no text
+    expect(button.querySelector('svg')).not.toBeNull()
+    fireEvent.click(button)
+    expect(copyToClipboard).toHaveBeenCalledWith(trader.address)
+    expect(screen.getByRole('button', { name: 'Address copied' })).toBeInTheDocument()
   })
 })

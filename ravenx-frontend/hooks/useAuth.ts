@@ -39,15 +39,23 @@ function describeAuthError(err: unknown): string {
 // One sign-in at a time for the whole page. Many components call useAuth();
 // each used to start its own sign-in, stacking signature prompts in the
 // wallet until it dropped them.
-let inflight: Promise<string> | null = null
-// The address auto sign-in was last tried for — once per connection, not
-// once per component.
-let autoTriedFor: string | null = null
+//
+// The state lives on globalThis, not in module variables: the production
+// bundler copies this module into more than one chunk, and each copy would
+// get its own variables — two sign-ins again (seen live, 2026-10-21).
+interface SignInState {
+  inflight: Promise<string> | null
+  // The address auto sign-in was last tried for — once per connection, not
+  // once per component.
+  autoTriedFor: string | null
+}
+const g = globalThis as typeof globalThis & { __ravenxSignIn?: SignInState }
+const signIn: SignInState = (g.__ravenxSignIn ??= { inflight: null, autoTriedFor: null })
 
 /** Test hook: forget page-wide sign-in state. */
 export function resetSignInState() {
-  inflight = null
-  autoTriedFor = null
+  signIn.inflight = null
+  signIn.autoTriedFor = null
 }
 
 export function useAuth() {
@@ -77,7 +85,7 @@ export function useAuth() {
     function onStorage(e: StorageEvent) {
       if (e.key === 'ravenx_token') {
         setToken(e.newValue)
-        if (!e.newValue) autoTriedFor = null
+        if (!e.newValue) signIn.autoTriedFor = null
       }
     }
     // Listen for both cross-tab storage events and same-tab dispatched events
@@ -88,7 +96,7 @@ export function useAuth() {
       const current = localStorage.getItem('ravenx_token')
       if (current !== token) {
         setToken(current)
-        if (!current) autoTriedFor = null
+        if (!current) signIn.autoTriedFor = null
       }
     }, 2000)
 
@@ -104,7 +112,7 @@ export function useAuth() {
     setAuthError(null)
     try {
       // Join a sign-in already in progress rather than prompting again.
-      inflight ??= (async () => {
+      signIn.inflight ??= (async () => {
         await ensureCorrectChain()
         const { data } = await api.get<{ nonce: string; message: string }>(
           `/auth/nonce?address=${address}`
@@ -122,9 +130,9 @@ export function useAuth() {
         window.dispatchEvent(new StorageEvent('storage', { key: 'ravenx_token', newValue: auth.access_token }))
         return auth.access_token
       })().finally(() => {
-        inflight = null
+        signIn.inflight = null
       })
-      setToken(await inflight)
+      setToken(await signIn.inflight)
     } catch (err) {
       setAuthError(describeAuthError(err))
       throw err
@@ -136,13 +144,13 @@ export function useAuth() {
   // Auto-login when wallet is connected but no valid token — once per
   // connection for the whole page, however many components use this hook.
   useEffect(() => {
-    if (isConnected && address && !token && autoTriedFor !== address) {
-      autoTriedFor = address
+    if (isConnected && address && !token && signIn.autoTriedFor !== address) {
+      signIn.autoTriedFor = address
       // A failure is surfaced via authError; the user retries explicitly.
       login().catch(() => {})
     }
     if (!isConnected) {
-      autoTriedFor = null
+      signIn.autoTriedFor = null
     }
   }, [isConnected, address, token, login])
 

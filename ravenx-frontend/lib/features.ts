@@ -11,6 +11,7 @@ export const LEADERBOARD_ENABLED = process.env.NEXT_PUBLIC_ENABLE_LEADERBOARD ==
 /** Where to send users looking for wallets while our leaderboard is off. */
 export const EXTERNAL_WALLET_FINDERS = [
   { label: 'Hyperliquid leaderboard', href: 'https://app.hyperliquid.xyz/leaderboard' },
+  { label: 'Dextrabot', href: 'https://app.dextrabot.com/discover-wallets' },
   { label: 'Hyperdash', href: 'https://hyperdash.info' },
   { label: 'Hypurrscan', href: 'https://hypurrscan.io' },
 ] as const

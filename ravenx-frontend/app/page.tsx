@@ -33,7 +33,7 @@ const STEPS: Step[] = [
     : {
         num: 1,
         title: 'Find a wallet',
-        desc: 'Paste any Hyperliquid address — or find one on Hyperdash or the Hyperliquid leaderboard.',
+        desc: 'Paste any Hyperliquid address — or find one on the Hyperliquid leaderboard, Dextrabot or Hyperdash.',
         emphasis: 'No signup, no email',
       },
   {
