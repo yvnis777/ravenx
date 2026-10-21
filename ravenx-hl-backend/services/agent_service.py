@@ -21,6 +21,7 @@ from eth_account import Account
 from eth_account.signers.local import LocalAccount
 from flask import current_app
 from hyperliquid.exchange import Exchange
+from hyperliquid.info import Info
 import hl_env
 
 logger = logging.getLogger(__name__)
@@ -87,23 +88,32 @@ def pop_pending_pkey(agent_address: str, parent_address: str) -> str:
 
 _meta_lock = threading.Lock()
 _meta_cache: dict | None = None
-_spot_meta_cache: dict | None = None
+
+# RavenX trades perps only, so the SDK is never given HL's spot tokens. SDK
+# 0.22.0 indexes them by list position, which HL's spot list broke
+# (IndexError in Info.__init__, seen on mainnet 2026-10-21) — and with it
+# every Info and Exchange we built.
+NO_SPOT_META = {"universe": [], "tokens": []}
 
 
 def _get_metas() -> tuple[dict, dict]:
-    """Fetch (and cache) HL perp + spot metadata.
+    """(perp metadata, empty spot metadata) for building SDK clients.
 
-    The Exchange constructor fetches both on every instantiation, and we build
-    an Exchange per copy execution — without this cache that's two extra HL
+    Perp metadata is fetched once and cached: the SDK otherwise fetches it on
+    every Info/Exchange, and we build an Exchange per copy execution — extra HL
     calls per fill, which is exactly the traffic that gets us rate-limited.
     """
-    global _meta_cache, _spot_meta_cache
+    global _meta_cache
     with _meta_lock:
         if _meta_cache is None:
             _meta_cache = _info_post({"type": "meta"})
-        if _spot_meta_cache is None:
-            _spot_meta_cache = _info_post({"type": "spotMeta"})
-        return _meta_cache, _spot_meta_cache
+        return _meta_cache, NO_SPOT_META
+
+
+def make_info() -> Info:
+    """An HL Info client for perps, built without any HL call of its own."""
+    meta, spot_meta = _get_metas()
+    return Info(hl_env.API_URL, skip_ws=True, meta=meta, spot_meta=spot_meta)
 
 
 def _info_post(payload: dict) -> dict:

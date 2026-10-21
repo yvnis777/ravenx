@@ -6,6 +6,9 @@ from eth_account import Account
 
 from services import agent_service
 
+# Captured before conftest's autouse fixture swaps it for a fake.
+REAL_GET_METAS = agent_service._get_metas
+
 
 def test_generate_returns_address_and_caches_pkey():
     addr = agent_service.generate_pending_agent("0xparent")
@@ -64,9 +67,48 @@ def test_unexpected_extra_agents_shape_reads_as_not_approved():
 def test_get_exchange_signs_with_agent_pkey(monkeypatch):
     # Seed the metadata caches so the Exchange constructor makes no HL calls.
     monkeypatch.setattr(agent_service, "_meta_cache", {"universe": []})
-    monkeypatch.setattr(agent_service, "_spot_meta_cache", {"universe": [], "tokens": []})
     pkey = "0x" + "1" * 64
     parent = "0x" + "a" * 40
     exchange = agent_service.get_exchange(parent, pkey)
     assert exchange.account_address.lower() == parent.lower()
     assert exchange.wallet.address == Account.from_key(pkey).address
+
+
+# ── Perps only: the SDK never sees HL's spot tokens ───────────────────────
+
+# Shaped like mainnet's spotMeta on 2026-10-21: a pair whose token index is
+# past the end of the token list. SDK 0.22.0 crashed on it with IndexError.
+BROKEN_SPOT_META = {
+    "universe": [{"name": "@1", "index": 1, "tokens": [1, 0]}],
+    "tokens": [{"name": "USDC", "index": 0, "szDecimals": 8}],
+}
+
+
+def test_sdk_022_cannot_parse_mainnets_spot_list():
+    """Why we pass NO_SPOT_META: given the real spot list, Info() crashes."""
+    from hyperliquid.info import Info
+    with pytest.raises(IndexError):
+        Info("http://unused", skip_ws=True, meta={"universe": []}, spot_meta=BROKEN_SPOT_META)
+
+
+def test_metas_never_fetch_spot_metadata(monkeypatch):
+    monkeypatch.setattr(agent_service, "_meta_cache", None)
+    calls = []
+    monkeypatch.setattr(agent_service, "_info_post",
+                        lambda payload: calls.append(payload["type"]) or {"universe": []})
+    meta, spot = REAL_GET_METAS()
+    assert calls == ["meta"]
+    assert spot == {"universe": [], "tokens": []}
+
+
+def test_make_info_builds_a_perps_client_without_calling_hl(monkeypatch):
+    from hyperliquid.api import API
+    def no_network(*a, **k):
+        raise AssertionError("Info() must not call HL")
+    monkeypatch.setattr(API, "post", no_network)
+    monkeypatch.setattr(agent_service, "_get_metas", lambda: (
+        {"universe": [{"name": "BTC", "szDecimals": 5}, {"name": "ETH", "szDecimals": 4}]},
+        agent_service.NO_SPOT_META,
+    ))
+    info = agent_service.make_info()
+    assert info.name_to_asset("ETH") == 1

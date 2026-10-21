@@ -30,7 +30,6 @@ from services.agent_service import get_exchange
 
 logger = logging.getLogger(__name__)
 from hyperliquid.info import Info
-import hl_env
 from hyperliquid.utils.types import Cloid
 
 # Built lazily: the Info constructor hits the HL API, so creating it at import
@@ -41,7 +40,7 @@ _info = None
 def _get_info() -> Info:
     global _info
     if _info is None:
-        _info = Info(hl_env.API_URL, skip_ws=True)
+        _info = agent_service.make_info()
     return _info
 
 from services.notification_service import (

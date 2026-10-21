@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (85 tests) |
+| Tests | pytest (88 tests) |
 
 ## Quick Start
 
@@ -170,7 +170,8 @@ The fee rail is kept, dormant: setting `BUILDER_ADDRESS` turns on a **0.03% buil
 
 - **Exactly one backend process, ever.** The copy engine runs inside the web process, so a second process copies every fill again (double positions, real money). Guards: `gunicorn.conf.py` refuses `workers > 1` and sets `preload_app = False`; `app._try_engine_lock` holds an exclusive flock so a second process on the host *waits* (it doesn't give up — on a graceful reload the new worker boots before the old exits). Run with `gunicorn -c gunicorn.conf.py "app:create_app()"`.
 - **The HL `Info` client is built lazily** (`copy_service._get_info()`). Never construct SDK clients at import time — a rate-limited HL made the module unimportable and took the backend down on boot.
-- **HL metadata is cached** in `agent_service._get_metas()`. `Exchange(...)` fetches perp + spot meta on every construction, and we build one per copy execution — without the cache that's two extra calls per fill.
+- **HL metadata is cached** in `agent_service._get_metas()`. `Exchange(...)` fetches perp + spot meta on every construction, and we build one per copy execution — without the cache that's two extra calls per fill. Build every `Info` through `agent_service.make_info()`.
+- **The SDK never sees spot tokens** (`NO_SPOT_META`). SDK 0.22.0 indexes HL's spot tokens by list position, which mainnet's spot list broke: `Info()` raised `IndexError`, taking down every read and every order (2026-10-21). RavenX trades perps only. SDK 0.24.0 fixes the parsing, if spot is ever needed.
 - **Hyperliquid rate limits are strict.** Max ~4 concurrent workers for `user_state`; startup jobs are staggered; never fire all background jobs at once on restart.
 - **Agent private keys are encrypted at rest** (`models/encrypted.py`, `EncryptedText` column). The master key lives only in `AGENT_KEY_ENCRYPTION_KEY`; the app refuses to boot without a valid one. A stolen DB alone yields no keys — but an agent can still trade (never withdraw), so a stolen DB *plus* env is a real loss: keep the key out of DB backups.
   - **Losing the master key** means every stored agent becomes unusable; each user must approve a new agent (starting any copy asks for it). Back it up separately.

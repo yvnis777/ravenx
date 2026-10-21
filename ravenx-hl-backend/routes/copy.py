@@ -5,7 +5,6 @@ from datetime import datetime
 from flask import Blueprint, current_app as _app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-import hl_env
 from extensions import db
 from models.subscription import Subscription
 from models.user import ParentWallet
@@ -97,9 +96,8 @@ def start_copying():
     # Snapshot peak equity from parent's HL account
     peak_equity = None
     try:
-        from hyperliquid.info import Info
-        info = Info(hl_env.API_URL, skip_ws=True)
-        state = info.user_state(parent)
+        from services.copy_service import _get_info
+        state = _get_info().user_state(parent)
         peak_equity = float(state["marginSummary"]["accountValue"])
     except Exception:
         pass
@@ -178,11 +176,9 @@ def stop_copying():
                         sid=sub_id_capture):
             with app.app_context():
                 try:
-                    from hyperliquid.info import Info
                     from hyperliquid.utils import signing
-                    from services.copy_service import _cloid_belongs_to_sub
-                    inf = Info(hl_env.API_URL, skip_ws=True)
-                    open_orders = inf.open_orders(addr)
+                    from services.copy_service import _cloid_belongs_to_sub, _get_info
+                    open_orders = _get_info().open_orders(addr)
                     # Filter by cloid so we don't cancel other subs' orders
                     mine = [o for o in open_orders
                             if _cloid_belongs_to_sub(o.get("cloid"), sid)]
