@@ -81,7 +81,7 @@ app/
 `useAgentApproval` orchestrates the whole thing:
 
 1. **Builder fee** — skipped entirely when `NEXT_PUBLIC_BUILDER_ADDRESS` is empty, or when `fetchMaxBuilderFee` shows the account already approved at least our rate. Otherwise the user signs `ApproveBuilderFee`.
-2. **Agent** — `POST /agent/generate`, then the user signs `ApproveAgent`, submitted to HL's `/exchange`.
+2. **Agent** — `POST /agent/generate`. If it returns `needs_approval: false`, the wallet's RavenX agent is still approved and is reused with no signature. Otherwise the user signs `ApproveAgent` under the fixed name `AGENT_NAME` (`ravenx`), submitted to HL's `/exchange`; the same name replaces the previous agent instead of using another of HL's few named-agent slots.
 3. `POST /copy/start` — the backend re-verifies both approvals on-chain before creating the subscription.
 
 The fee is signed **first**, so declining it means no agent was ever created. `lib/fee.ts` is the single source of truth for the rate and must match the backend's `BUILDER_ADDRESS` / `BUILDER_FEE_TENTHS_BPS`.

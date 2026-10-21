@@ -1,6 +1,5 @@
 from datetime import datetime
 from extensions import db
-from models.encrypted import EncryptedText
 
 
 class Subscription(db.Model):
@@ -10,10 +9,10 @@ class Subscription(db.Model):
     parent_address = db.Column(
         db.String(42), db.ForeignKey("parent_wallets.address"), nullable=False, index=True
     )
-    agent_address = db.Column(db.String(42), unique=True, nullable=False)
-    # Agent private key, encrypted at rest (models/encrypted.py). The agent can
-    # trade but never withdraw. Reads and writes are plaintext through the ORM.
-    agent_private_key = db.Column(EncryptedText, nullable=True)
+    # The wallet's agent when this copy started. Copies share their wallet's
+    # agent, whose key lives in AgentWallet. (Databases created before that
+    # change still have an unused agent_private_key column here.)
+    agent_address = db.Column(db.String(42), nullable=True)
     target_address = db.Column(db.String(42), nullable=False, index=True)
     target_name = db.Column(db.String(100), nullable=True)
     scaling_pct = db.Column(db.Float, default=100.0)

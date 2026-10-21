@@ -13,7 +13,7 @@ vi.mock('wagmi', () => ({
 
 vi.mock('@/lib/api', () => ({
   api: {
-    post: vi.fn().mockResolvedValue({ data: { agent_address: '0xagent' } }),
+    post: vi.fn().mockResolvedValue({ data: { agent_address: '0xagent', needs_approval: true } }),
   },
 }))
 
@@ -47,9 +47,39 @@ describe('useAgentApproval', () => {
     const { result } = renderHook(() => useAgentApproval(), { wrapper })
     let returned: string | null = null
     await act(async () => {
-      returned = await result.current.approve('ravenx-test')
+      returned = await result.current.approve()
     })
     expect(returned).toBe('0xagent')
+  })
+
+  it('approves the agent under the fixed RavenX name', async () => {
+    const mod = await import('@/lib/hyperliquid-agent')
+    const { result } = renderHook(() => useAgentApproval(), { wrapper })
+    await act(async () => {
+      await result.current.approve()
+    })
+    expect(mod.buildApproveAgentTypedData).toHaveBeenCalledWith(
+      expect.objectContaining({ agentName: 'ravenx', agentAddress: '0xagent' })
+    )
+    expect(mod.submitApproveAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentName: 'ravenx' })
+    )
+  })
+
+  it("reuses the wallet's approved agent without asking for a signature", async () => {
+    const { api } = await import('@/lib/api')
+    ;(api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: { agent_address: '0xsaved', needs_approval: false },
+    })
+    const mod = await import('@/lib/hyperliquid-agent')
+    const { result } = renderHook(() => useAgentApproval(), { wrapper })
+    let returned: string | null = null
+    await act(async () => {
+      returned = await result.current.approve()
+    })
+    expect(returned).toBe('0xsaved')
+    expect(mod.submitApproveAgent).not.toHaveBeenCalled()
+    expect(result.current.step).toEqual({ kind: 'done', agentAddress: '0xsaved' })
   })
 
   it('throws when HL submission fails', async () => {
@@ -61,7 +91,7 @@ describe('useAgentApproval', () => {
     const { result } = renderHook(() => useAgentApproval(), { wrapper })
     await expect(
       act(async () => {
-        await result.current.approve('ravenx-test')
+        await result.current.approve()
       })
     ).rejects.toThrow()
   })
@@ -72,7 +102,7 @@ describe('useAgentApproval', () => {
     const mod = await import('@/lib/hyperliquid-agent')
     const { result } = renderHook(() => useAgentApproval(), { wrapper })
     await act(async () => {
-      await result.current.approve('ravenx-test')
+      await result.current.approve()
     })
     expect(mod.submitApproveBuilderFee).not.toHaveBeenCalled()
     expect(mod.fetchMaxBuilderFee).not.toHaveBeenCalled()

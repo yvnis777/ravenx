@@ -90,12 +90,10 @@ def test_increase_uses_only_this_subs_intended_share(app, mock_info, mock_exchan
         db.session.add(ParentWallet(address=parent))
         sub_a = Subscription(
             parent_address=parent, agent_address=agent_a,
-            agent_private_key="0x" + "1" * 64,
             target_address=target, scaling_pct=100, is_active=True,
         )
         sub_b = Subscription(
             parent_address=parent, agent_address=agent_b,
-            agent_private_key="0x" + "2" * 64,
             target_address=target, scaling_pct=50, is_active=True,
         )
         db.session.add_all([sub_a, sub_b])
@@ -145,7 +143,6 @@ def test_close_only_closes_this_subs_share(app, mock_info, mock_exchange_factory
         db.session.add(ParentWallet(address=parent))
         sub_a = Subscription(
             parent_address=parent, agent_address=agent_a,
-            agent_private_key="0x" + "1" * 64,
             target_address=target, scaling_pct=100, is_active=True,
         )
         db.session.add(sub_a)
@@ -210,7 +207,6 @@ def test_zero_target_equity_is_skipped(app, mock_info, mock_exchange_factory):
         db.session.add(ParentWallet(address=parent))
         sub = Subscription(
             parent_address=parent, agent_address=agent,
-            agent_private_key="0x" + "1" * 64,
             target_address=target, scaling_pct=100, is_active=True,
         )
         db.session.add(sub)
@@ -233,7 +229,7 @@ def test_size_that_rounds_to_zero_is_not_sent(app, mock_info, mock_exchange_fact
     with app.app_context():
         db.session.add(ParentWallet(address=parent))
         sub = Subscription(parent_address=parent, agent_address="0x" + "b" * 40,
-                           agent_private_key="0x" + "1" * 64, target_address=target,
+                           target_address=target,
                            scaling_pct=100, is_active=True)
         db.session.add(sub)
         db.session.commit()

@@ -11,12 +11,12 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Backend | Python 3.12 / Flask |
 | Database | PostgreSQL in production, SQLite in dev (SQLAlchemy 2.x) |
 | Auth | EIP-191 wallet signature → JWT |
-| Trading auth | HL agent wallets (`ApproveAgent`); private key encrypted at rest in `subscriptions` (Fernet) |
+| Trading auth | One HL agent wallet per user (`ApproveAgent`, name `ravenx`); private key encrypted at rest in `agent_wallets` (Fernet) |
 | Revenue | None for now — copying is free. Builder-fee rail (`ApproveBuilderFee`) is built but dormant |
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (75 tests) |
+| Tests | pytest (85 tests) |
 
 ## Quick Start
 
@@ -48,7 +48,7 @@ MIN_POSITION_SIZE_USD         Minimum order size in USD, default 10.0
 TRADER_SCAN_INTERVAL_MINUTES  Enrichment interval, default 30
 NONCE_EXPIRY_SECONDS          Auth nonce TTL, default 300
 AGENT_PENDING_TTL_SECONDS     How long a generated agent waits for approval, default 600
-AGENT_KEY_GC_DAYS             Intended retention for stopped subs' agent keys, default 90 — NOT YET ENFORCED, no job reads it
+AGENT_KEY_GC_DAYS             Intended retention for unused agent keys, default 90 — NOT YET ENFORCED, no job reads it
 ENABLE_LEADERBOARD            1 = run wallet discovery (harvesters, scanner, price feed). Default off.
 DISABLE_BACKGROUND_WORKERS    Set to any value to skip background threads
 COPY_ENGINE_LOCK_FILE         Per-host copy-engine lock, default <tmp>/ravenx-copy-engine.lock (prod: /var/lib/ravenx/copy-engine.lock)
@@ -71,7 +71,8 @@ ravenx-hl-backend/
 ├── models/
 │   ├── user.py               # ParentWallet
 │   ├── encrypted.py          # EncryptedText column type (Fernet) for agent keys
-│   ├── subscription.py       # Subscription (parent → target, agent keypair, N per user)
+│   ├── agent_wallet.py       # AgentWallet (the wallet's one agent + encrypted key)
+│   ├── subscription.py       # Subscription (parent → target, N per user, sharing the wallet's agent)
 │   ├── position.py           # TrackedPosition (this sub's intended share per coin)
 │   ├── trader.py             # Trader (leaderboard cache + period PnL columns)
 │   ├── discovered_wallet.py  # DiscoveredWallet (harvested addresses, pre-enrichment)
@@ -114,7 +115,7 @@ The leaderboard is built from our own scanner — no dependency on any HL leader
 |--------|----------|------|-------------|
 | GET | `/auth/nonce?address=0x...` | — | Get message to sign |
 | POST | `/auth/verify` | — | Submit signature → JWT |
-| POST | `/agent/generate` | JWT | Generate an agent keypair; returns `agent_address` |
+| POST | `/agent/generate` | JWT | The wallet's agent if still approved on HL (`needs_approval: false`), else a new one to approve |
 | POST | `/copy/start` | JWT | Start copying (verifies agent + builder fee on HL) |
 | POST | `/copy/stop` | JWT | Stop copying; cancels this sub's open orders |
 | GET | `/copy/subscriptions` | JWT | My subscriptions |
@@ -137,11 +138,11 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 1. User connects wallet → signs nonce → JWT.
 2. User clicks Copy → frontend approves the **builder fee** (skipped if `maxBuilderFee` already ≥ our rate, or if no builder is configured).
-3. `POST /agent/generate` → backend generates a keypair, caches the private key in memory keyed by the pending agent address.
-4. Frontend builds the `ApproveAgent` typed data, user signs, frontend submits to `https://api.hyperliquid.xyz/exchange`.
-5. `POST /copy/start` → backend verifies **both** approvals on HL (`extraAgents` and `maxBuilderFee`), then persists the subscription with the agent key.
-6. The WS daemon subscribes to the target. On each fill, the copy engine signs orders with the agent key; they execute on the user's own HL account.
-7. Stop → sub marked inactive, any of this sub's open orders cancelled. **The agent is not auto-revoked** — the user can revoke it on HL.
+3. `POST /agent/generate` → if the wallet's saved agent is still in HL's `extraAgents`, it's returned with `needs_approval: false` and step 4 is skipped. Otherwise the backend generates a keypair and caches the private key in memory, keyed by the pending agent address.
+4. Frontend builds the `ApproveAgent` typed data with `agentName: "ravenx"`, user signs, frontend submits to `https://api.hyperliquid.xyz/exchange`. Same name ⇒ HL replaces the wallet's previous RavenX agent.
+5. `POST /copy/start` → backend verifies **both** approvals on HL (`extraAgents` and `maxBuilderFee`). A newly approved agent is saved to `agent_wallets` **immediately**, before anything else can fail, then the subscription is created.
+6. The WS daemon subscribes to the target. On each fill, the copy engine signs with the **wallet's current agent**; orders execute on the user's own HL account.
+7. Stop → sub marked inactive, any of this sub's open orders cancelled. **The agent is not revoked**: the wallet's other copies still use it.
 
 ## Copy Algorithm
 
@@ -172,14 +173,16 @@ The fee rail is kept, dormant: setting `BUILDER_ADDRESS` turns on a **0.03% buil
 - **HL metadata is cached** in `agent_service._get_metas()`. `Exchange(...)` fetches perp + spot meta on every construction, and we build one per copy execution — without the cache that's two extra calls per fill.
 - **Hyperliquid rate limits are strict.** Max ~4 concurrent workers for `user_state`; startup jobs are staggered; never fire all background jobs at once on restart.
 - **Agent private keys are encrypted at rest** (`models/encrypted.py`, `EncryptedText` column). The master key lives only in `AGENT_KEY_ENCRYPTION_KEY`; the app refuses to boot without a valid one. A stolen DB alone yields no keys — but an agent can still trade (never withdraw), so a stolen DB *plus* env is a real loss: keep the key out of DB backups.
-  - **Losing the master key** means every stored agent becomes unusable; users must stop and re-approve their copies. Back it up separately.
+  - **Losing the master key** means every stored agent becomes unusable; each user must approve a new agent (starting any copy asks for it). Back it up separately.
   - **Rotation:** set `"new,old"`, restart, then remove `old` once rows have been rewritten (rows re-encrypt on their next write; there's no bulk re-encrypt script yet).
-  - Stopped subs keep their key until a GC job exists — `AGENT_KEY_GC_DAYS` is configured but unused.
+  - A wallet's agent key is kept even once all its copies are stopped, until a GC job exists — `AGENT_KEY_GC_DAYS` is configured but unused.
 - **A fee-bearing order fails if the user hasn't approved the rate**, so `/copy/start` verifies the approval up front rather than letting the first fill fail.
+- **One agent per wallet.** HL caps named agents per account (3 for low-volume accounts) and each approval with a new name takes a slot, so an agent per copy locked users out after 3 copies or 3 failed starts. Copies on a wallet share its agent; cloid prefixes, not agents, keep their orders apart. HL agents expire (~90 days by default): an expired agent drops out of `extraAgents`, the next `/agent/generate` asks for a new approval, and the replacement covers every copy on the wallet.
+- **`extraAgents` returns a bare list** of `{name, address, validUntil}`, not an object.
 - **HL unreachable reads as "not approved"** for both agent and fee checks — we never attach a fee the user didn't authorize.
 - **SQLite throws "database is locked"** when background threads run concurrently. Use PostgreSQL in production.
 - **Dashboard endpoints are intentionally public** — the leaderboard is browseable without login.
-- **No Alembic yet.** `db.create_all()` creates missing tables only; columns added later go in `app._add_missing_columns()`, which runs `ALTER TABLE` on boot when they're missing.
+- **No Alembic yet.** `db.create_all()` creates missing tables only; columns added later go in `app._add_missing_columns()`, which runs `ALTER TABLE` on boot when they're missing. `app._relax_subscription_agent_address()` drops the old UNIQUE/NOT NULL on `subscriptions.agent_address` (Postgres in place; SQLite only by rebuilding an empty table). Old databases keep an unused `subscriptions.agent_private_key` column.
 - `risk_params` supports: `stop_loss_pct`, `max_drawdown_pct`, `max_position_usd`, `min_position_usd`, `price_tolerance_pct`, `copy_existing_mode`.
 
 ## Production
@@ -188,4 +191,4 @@ Self-hosted on a single VPS behind nginx — see [`deploy/README.md`](deploy/REA
 
 ## Status
 
-V2 is implemented and unit-tested, and runs locally against **mainnet** (`HL_ENV=mainnet`) with the leaderboard off. **The agent-approval flow has never run against real Hyperliquid** — no signature has been submitted from this code. An end-to-end test with a small funded account is the main outstanding risk before launch. Also open: `AGENT_KEY_GC_DAYS` isn't enforced.
+V2 is implemented and unit-tested, and runs locally against **mainnet** (`HL_ENV=mainnet`) with the leaderboard off. The agent approval has run against real Hyperliquid (2026-10-20); that first run found the `extraAgents` parsing bug and led to one agent per wallet. A full end-to-end copy with a small funded account is still the main outstanding check before launch. Also open: `AGENT_KEY_GC_DAYS` isn't enforced.

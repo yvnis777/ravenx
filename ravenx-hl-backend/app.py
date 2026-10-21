@@ -51,6 +51,7 @@ def create_app():
         _cipher()
 
         # Touch every model so SQLAlchemy registers the tables
+        import models.agent_wallet  # noqa: F401
         import models.discovered_wallet  # noqa: F401
         import models.notification  # noqa: F401
         import models.position  # noqa: F401
@@ -60,6 +61,7 @@ def create_app():
         import models.nonce  # noqa: F401
         db.create_all()
         _add_missing_columns()
+        _relax_subscription_agent_address()
 
         if not app.config.get("DISABLE_BACKGROUND_WORKERS"):
             _start_services_when_lock_free(app)
@@ -89,6 +91,45 @@ def _add_missing_columns():
         with db.engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {name} {col_type}"))
         logging.getLogger(__name__).info("Added column %s.%s", table.name, name)
+
+
+def _relax_subscription_agent_address():
+    """Let copies share an agent: subscriptions.agent_address was once
+    NOT NULL and UNIQUE (one agent per copy). Idempotent."""
+    from sqlalchemy import inspect, text
+    from models.subscription import Subscription
+
+    insp = inspect(db.engine)
+    col = next(c for c in insp.get_columns("subscriptions") if c["name"] == "agent_address")
+    uniques = [u["name"] for u in insp.get_unique_constraints("subscriptions")
+               if u["column_names"] == ["agent_address"]]
+    # Postgres also lists the index behind a UNIQUE constraint; dropping the
+    # constraint drops that index, so only standalone unique indexes count.
+    indexes = [i["name"] for i in insp.get_indexes("subscriptions")
+               if i.get("unique") and i["column_names"] == ["agent_address"]
+               and not i.get("duplicates_constraint") and i["name"] not in uniques]
+    if col["nullable"] and not uniques and not indexes:
+        return
+
+    if db.engine.dialect.name == "postgresql":
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE subscriptions ALTER COLUMN agent_address DROP NOT NULL"))
+            for name in uniques:
+                conn.execute(text(f'ALTER TABLE subscriptions DROP CONSTRAINT "{name}"'))
+            for name in indexes:
+                conn.execute(text(f'DROP INDEX "{name}"'))
+    else:
+        # SQLite can't drop a constraint in place; rebuilding is only safe empty.
+        with db.engine.connect() as conn:
+            rows = conn.execute(text("SELECT COUNT(*) FROM subscriptions")).scalar()
+        if rows:
+            raise RuntimeError(
+                "subscriptions.agent_address is still UNIQUE and the table has rows. "
+                "This dev database predates shared agents: delete it and restart."
+            )
+        Subscription.__table__.drop(db.engine)
+        Subscription.__table__.create(db.engine)
+    logging.getLogger(__name__).info("Relaxed subscriptions.agent_address for shared agents")
 
 
 # ── One copy engine per host ──────────────────────────────────────────────────

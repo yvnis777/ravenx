@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import StatementError
 
 from extensions import db
-from models.subscription import Subscription
+from models.agent_wallet import AgentWallet
 from models.user import ParentWallet
 
 PKEY = "0x" + "ab" * 32
@@ -15,20 +15,20 @@ PARENT = "0x" + "a" * 40
 def _store(app):
     with app.app_context():
         db.session.add(ParentWallet(address=PARENT))
-        db.session.add(Subscription(parent_address=PARENT, agent_address="0x" + "b" * 40,
-                                    agent_private_key=PKEY, target_address="0x" + "c" * 40))
+        db.session.add(AgentWallet(parent_address=PARENT, agent_address="0x" + "b" * 40,
+                                   agent_private_key=PKEY))
         db.session.commit()
 
 
 def _raw(app):
     with app.app_context():
-        return db.session.execute(text("SELECT agent_private_key FROM subscriptions")).scalar_one()
+        return db.session.execute(text("SELECT agent_private_key FROM agent_wallets")).scalar_one()
 
 
 def _read(app):
     with app.app_context():
         db.session.expire_all()
-        return db.session.execute(db.select(Subscription)).scalar_one().agent_private_key
+        return db.session.execute(db.select(AgentWallet)).scalar_one().agent_private_key
 
 
 def test_key_is_not_stored_in_plaintext(app):
@@ -40,16 +40,6 @@ def test_key_is_not_stored_in_plaintext(app):
 def test_orm_returns_the_plaintext_key(app):
     _store(app)
     assert _read(app) == PKEY
-
-
-def test_null_key_stays_null(app):
-    with app.app_context():
-        db.session.add(ParentWallet(address=PARENT))
-        db.session.add(Subscription(parent_address=PARENT, agent_address="0x" + "b" * 40,
-                                    agent_private_key=None, target_address="0x" + "c" * 40))
-        db.session.commit()
-    assert _raw(app) is None
-    assert _read(app) is None
 
 
 def test_a_different_master_key_cannot_decrypt(app):

@@ -15,6 +15,13 @@ import { IS_MAINNET } from '@/lib/hl-env'
 
 const ARBITRUM_MAINNET_CHAIN_ID = 42161
 
+/**
+ * Every wallet approves a single RavenX agent, always under this name. HL
+ * replaces a named agent when the same name is approved again, so renewing
+ * it never uses another of the account's few named-agent slots.
+ */
+export const AGENT_NAME = 'ravenx'
+
 // Re-exported so existing importers keep working.
 export { BUILDER_ADDRESS, BUILDER_FEE_TENTHS_BPS, feeRateLabel }
 
@@ -75,21 +82,32 @@ export function useAgentApproval() {
     }
   }, [address, signTypedDataAsync])
 
+  /**
+   * The agent to copy with. Reuses the wallet's RavenX agent while Hyperliquid
+   * still lists it (no signature); otherwise asks the user to approve a new one.
+   */
   const approve = useCallback(
-    async (agentName: string): Promise<string> => {
+    async (): Promise<string> => {
       try {
         // Fee first: if the user declines it, no agent has been created yet.
         await approveFeeIfNeeded()
 
         setStep({ kind: 'generating' })
-        const { data } = await api.post<{ agent_address: string }>('/agent/generate', {})
+        const { data } = await api.post<{ agent_address: string; needs_approval: boolean }>(
+          '/agent/generate',
+          {}
+        )
         const agentAddress = data.agent_address
+        if (!data.needs_approval) {
+          setStep({ kind: 'done', agentAddress })
+          return agentAddress
+        }
 
         setStep({ kind: 'awaiting-signature', agentAddress })
         const nonce = Date.now()
         const td = buildApproveAgentTypedData({
           agentAddress,
-          agentName,
+          agentName: AGENT_NAME,
           nonce,
           signatureChainId: ARBITRUM_MAINNET_CHAIN_ID,
           isMainnet: IS_MAINNET,
@@ -105,7 +123,7 @@ export function useAgentApproval() {
         const result = await submitApproveAgent({
           signature,
           agentAddress,
-          agentName,
+          agentName: AGENT_NAME,
           nonce,
           signatureChainId: ARBITRUM_MAINNET_CHAIN_ID,
           isMainnet: IS_MAINNET,

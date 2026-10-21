@@ -31,7 +31,7 @@ def _sub(held_at_start=None, positions=()):
     from models.user import ParentWallet
     db.session.add(ParentWallet(address=PARENT))
     sub = Subscription(parent_address=PARENT, agent_address="0x" + "b" * 40,
-                       agent_private_key=PKEY, target_address=TARGET,
+                       target_address=TARGET,
                        scaling_pct=100, is_active=True, held_at_start=held_at_start)
     db.session.add(sub)
     db.session.commit()

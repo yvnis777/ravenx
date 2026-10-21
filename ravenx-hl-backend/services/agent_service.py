@@ -6,7 +6,11 @@ keypair authorized via HL's `ApproveAgent` action to place trades on a user's
 account but **not** withdraw. We generate the agent server-side, hand the
 public address to the frontend, and keep the private key in memory until the
 user's `ApproveAgent` signature lands on HL — at which point routes/copy.py
-verifies on-chain and persists the key in the Subscription row.
+verifies on-chain and saves the key as the wallet's AgentWallet.
+
+Each wallet has one agent, shared by all its copies. HL caps named agents per
+account (3 for low-volume accounts), so one agent per copy ran users out of
+slots; the frontend approves under a fixed name, which replaces the old agent.
 """
 import logging
 import threading
@@ -174,3 +178,27 @@ def get_exchange(parent_address: str, agent_pkey: str) -> Exchange:
         spot_meta=spot_meta,
         account_address=parent_address,
     )
+
+
+def wallet_agent(parent_address: str):
+    """The AgentWallet saved for this wallet, or None."""
+    from extensions import db
+    from models.agent_wallet import AgentWallet
+    return db.session.get(AgentWallet, parent_address.lower())
+
+
+def save_wallet_agent(parent_address: str, agent_address: str, agent_pkey: str):
+    """Make this agent the wallet's agent, replacing any earlier one.
+
+    On HL the new approval already replaced the old agent (same name), so
+    every copy on the wallet switches to the new key from its next fill.
+    """
+    from extensions import db
+    from models.agent_wallet import AgentWallet
+    row = wallet_agent(parent_address)
+    if row is None:
+        row = AgentWallet(parent_address=parent_address.lower())
+        db.session.add(row)
+    row.agent_address = agent_address.lower()
+    row.agent_private_key = agent_pkey
+    db.session.commit()

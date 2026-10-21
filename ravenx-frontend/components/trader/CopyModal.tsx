@@ -181,9 +181,8 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      const agentName = `ravenx-${Date.now().toString(36)}`
       await assertBackendNetwork()
-      const agentAddress = await approve(agentName)
+      const agentAddress = await approve()
       const { data } = await api.post('/copy/start', {
         target_address: targetAddress,
         agent_address: agentAddress,
