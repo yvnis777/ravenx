@@ -5,11 +5,14 @@ import { api } from '@/lib/api'
 import { assertBackendNetwork } from '@/lib/hl-env'
 import { useAuth } from '@/hooks/useAuth'
 import { useSubscriptions } from '@/hooks/useSubscriptions'
+import { useTrader } from '@/hooks/useTrader'
 import { useAgentApproval, BUILDER_ADDRESS, feeRateLabel } from '@/hooks/useAgentApproval'
 import { useAppKit } from '@reown/appkit/react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
+import { checkSizing, MIN_ORDER_USD, SCALE_LIMIT, type SizingCheck } from '@/lib/copy-sizing'
+import { fmtMoney } from '@/lib/format'
 import type { Subscription } from '@/types'
 
 const COPY_ERRORS: Record<string, string> = {
@@ -100,19 +103,91 @@ function Toggle({
   )
 }
 
+/** Exposure above this multiple of equity is flagged. */
+const HIGH_LEVERAGE = 10
+
+const WARN_BOX =
+  'flex flex-col gap-2 rounded-md border border-[rgba(240,180,41,0.3)] bg-[rgba(240,180,41,0.08)] p-2.5'
+
+/** The scale this trader needs on this account, and what the chosen one copies. */
+function SizingNotice({
+  check,
+  scalingPct,
+  onScale,
+}: {
+  check: SizingCheck
+  scalingPct: number
+  onScale: (pct: number) => void
+}) {
+  const small = check.total - check.copied
+  const exposure = (
+    <p className={`num text-[11px] ${check.leverage > HIGH_LEVERAGE ? 'text-warn' : 'text-faint'}`}>
+      The trader&apos;s current positions at {scalingPct}%: {fmtMoney(check.exposure)},{' '}
+      {check.leverage.toFixed(1)}× your equity.
+    </p>
+  )
+
+  if (check.minPct === null) {
+    return (
+      <div className={WARN_BOX}>
+        <p className="text-xs font-medium text-warn">Account too small for this trader</p>
+        <p className="text-[11px] text-muted">
+          Hyperliquid rejects orders under ${MIN_ORDER_USD}. This trader&apos;s positions are so
+          large next to your account that even {SCALE_LIMIT}% leaves most of them under that, so
+          you would miss most of their trades. Add funds to your account to copy them.
+        </p>
+        {exposure}
+      </div>
+    )
+  }
+
+  if (scalingPct < check.minPct) {
+    return (
+      <div className={WARN_BOX}>
+        <p className="num text-xs font-medium text-warn">Suggested minimum scale: {check.minPct}%</p>
+        <p className="text-[11px] text-muted">
+          Hyperliquid rejects orders under ${MIN_ORDER_USD}. At {scalingPct}%, {small} of the
+          trader&apos;s {check.total} open positions come out smaller than that for your account
+          and would be skipped, so you would miss a lot of this trader&apos;s trades.
+        </p>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="self-start"
+          onClick={() => onScale(check.minPct!)}
+        >
+          Use {check.minPct}%
+        </Button>
+        {exposure}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="num text-[11px] text-faint">
+        Suggested minimum scale: {check.minPct}%. At {scalingPct}%, {check.copied} of the
+        trader&apos;s {check.total} open positions are ${MIN_ORDER_USD} or more for your account.
+      </p>
+      {exposure}
+    </div>
+  )
+}
+
 interface CopyModalProps {
   targetAddress: string
   onClose: () => void
 }
 
 export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
-  const { isAuthenticated, isConnected, isSigningIn, authError, login } = useAuth()
+  const { address, isAuthenticated, isConnected, isSigningIn, authError, login } = useAuth()
   const { open } = useAppKit()
   const queryClient = useQueryClient()
   const { data: subscriptions = [] } = useSubscriptions()
   const { approve, step } = useAgentApproval()
 
   const [scalingPct, setScalingPct] = useState(100)
+  const [scaleInput, setScaleInput] = useState('100')
   const [stopLossEnabled, setStopLossEnabled] = useState(false)
   const [stopLoss, setStopLoss] = useState('10')
   const [maxDrawdownEnabled, setMaxDrawdownEnabled] = useState(false)
@@ -131,6 +206,18 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
   const activeSub = subscriptions.find(
     (s) => s.target_address.toLowerCase() === targetAddress.toLowerCase() && s.is_active
   )
+  const { data: target } = useTrader(targetAddress)
+  const { data: me } = useTrader(isAuthenticated ? (address ?? '') : '')
+  const sizing =
+    target && me
+      ? checkSizing(
+          me.perp_equity,
+          target.perp_equity,
+          target.open_positions.map((p) => p.position_value ?? p.szi * p.entry_px),
+          scalingPct
+        )
+      : null
+
   const activeSubs = subscriptions.filter((s) => s.is_active)
   const cumulativeScaling = activeSubs.reduce((sum, s) => sum + s.scaling_pct, 0) + scalingPct
   const overCap = !activeSub && cumulativeScaling > 100
@@ -147,7 +234,7 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
   function enterEditMode() {
     if (!activeSub) return
     const rp = activeSub.risk_params ?? {}
-    setScalingPct(activeSub.scaling_pct)
+    setScale(activeSub.scaling_pct)
     setTargetName(activeSub.target_name ?? '')
     setStopLossEnabled(!!rp.stop_loss_pct)
     setStopLoss(String(rp.stop_loss_pct ?? 10))
@@ -163,6 +250,18 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
     } else setPriceMode('default')
     setError('')
     setEditing(true)
+  }
+
+  function setScale(pct: number) {
+    setScalingPct(pct)
+    setScaleInput(String(pct))
+  }
+
+  /** Typing keeps the last valid scale; the field snaps back to it on blur. */
+  function onScaleInput(text: string) {
+    setScaleInput(text)
+    const pct = Number(text)
+    if (text.trim() !== '' && pct > 0 && pct <= SCALE_LIMIT) setScalingPct(pct)
   }
 
   function buildRiskParams() {
@@ -277,23 +376,47 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
 
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <span className={LABEL}>Scale</span>
-          <span className="num text-xs font-medium text-accent">{scalingPct}%</span>
+          <label className={LABEL} htmlFor="copy-scale">
+            Scale
+          </label>
+          <div className="flex items-center gap-1">
+            <input
+              id="copy-scale"
+              type="number"
+              value={scaleInput}
+              onChange={(e) => onScaleInput(e.target.value)}
+              onBlur={() => setScaleInput(String(scalingPct))}
+              min={1}
+              max={SCALE_LIMIT}
+              step={1}
+              className={`${FIELD} w-16 text-right`}
+            />
+            <span className="text-[11px] text-faint">%</span>
+          </div>
         </div>
         <input
           type="range"
           min={10}
           max={200}
           step={10}
-          value={scalingPct}
-          onChange={(e) => setScalingPct(Number(e.target.value))}
+          value={Math.min(scalingPct, 200)}
+          onChange={(e) => setScale(Number(e.target.value))}
           aria-label="Scaling percent"
           className="w-full accent-[var(--accent)]"
         />
         <p className="text-[11px] text-faint">
-          100% mirrors the trader&apos;s sizing, proportional to your equity.
+          100% mirrors the trader&apos;s sizing, proportional to your equity. Type any scale up
+          to {SCALE_LIMIT}%.
         </p>
       </div>
+
+      {sizing && (
+        <SizingNotice
+          check={sizing}
+          scalingPct={scalingPct}
+          onScale={setScale}
+        />
+      )}
 
       <button
         type="button"

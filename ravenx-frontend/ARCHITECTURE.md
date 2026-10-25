@@ -86,6 +86,8 @@ app/
 2. **Agent** — `POST /agent/generate`. If it returns `needs_approval: false`, the wallet's RavenX agent is still approved and is reused with no signature. Otherwise the user signs `ApproveAgent` under the fixed name `AGENT_NAME` (`ravenx`), submitted to HL's `/exchange`; the same name replaces the previous agent instead of using another of HL's few named-agent slots.
 3. `POST /copy/start` — the backend re-verifies both approvals on-chain before creating the subscription.
 
+**Scale:** typed freely up to 1000% (the backend's cap; the slider covers 10–200%). `CopyModal` sizes the target's open positions to the user's equity (`lib/copy-sizing.ts`) and suggests a minimum scale: the smallest that puts the positions making up 90% of the target's exposure over HL's $10 order minimum (with 10% headroom for lot rounding). Below it, a warning says how many positions would be skipped. It also shows the resulting exposure as a multiple of equity, flagged above 10×. `MIN_ORDER_USD` must match the backend's `MIN_POSITION_SIZE_USD`.
+
 The fee is signed **first**, so declining it means no agent was ever created. `lib/fee.ts` is the single source of truth for the rate and must match the backend's `BUILDER_ADDRESS` / `BUILDER_FEE_TENTHS_BPS`.
 
 ## Key Gotchas

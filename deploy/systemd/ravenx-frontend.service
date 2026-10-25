@@ -11,6 +11,8 @@ WorkingDirectory=/opt/ravenx/ravenx-frontend
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node node_modules/next/dist/bin/next start --port 3000 --hostname 127.0.0.1
 Restart=always
+# Node exits 143 on SIGTERM; a stop or redeploy isn't a failure
+SuccessExitStatus=143
 RestartSec=3
 
 NoNewPrivileges=true

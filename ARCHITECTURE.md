@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (98 tests) |
+| Tests | pytest (101 tests) |
 
 ## Quick Start
 
@@ -159,6 +159,8 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 **Scaling:** `ideal_szi = my_equity × (target_szi / target_equity) × (scaling_pct / 100)`, with equity read per account mode (see Key Gotchas).
 
+**Small shares:** a delta under `min_position_usd` (default $10, HL's order minimum) is skipped and only logged — never notified, since every fill re-checks every coin (one test copy wrote 106k notifications in 4 days). A small account copying a big trader therefore misses most trades; the copy dialog warns about this and suggests a minimum scale (see the frontend's Copy Flow).
+
 **Concurrency:** a `threading.Lock` per subscription prevents double execution on rapid fills.
 
 ## Business Model
@@ -188,6 +190,7 @@ The fee rail is kept, dormant: setting `BUILDER_ADDRESS` turns on a **0.03% buil
 - **Dashboard endpoints are intentionally public** — the leaderboard is browseable without login.
 - **No Alembic yet.** `db.create_all()` creates missing tables only; columns added later go in `app._add_missing_columns()`, which runs `ALTER TABLE` on boot when they're missing. `app._relax_subscription_agent_address()` drops the old UNIQUE/NOT NULL on `subscriptions.agent_address` (Postgres in place; SQLite only by rebuilding an empty table). Old databases keep an unused `subscriptions.agent_private_key` column.
 - `risk_params` supports: `stop_loss_pct`, `max_drawdown_pct`, `max_position_usd`, `min_position_usd`, `price_tolerance_pct`, `copy_existing_mode`.
+- **Every order carries the sub's cloid**, closes included, so each fill on HL traces back to its copy.
 
 ## Production
 
@@ -195,4 +198,4 @@ Self-hosted on a single VPS behind nginx — see [`deploy/README.md`](deploy/REA
 
 ## Status
 
-V2 is implemented and unit-tested, and runs locally against **mainnet** (`HL_ENV=mainnet`) with the leaderboard off. The agent approval has run against real Hyperliquid (2026-10-20); that first run found the `extraAgents` parsing bug and led to one agent per wallet. A full end-to-end copy with a small funded account is still the main outstanding check before launch. Also open: `AGENT_KEY_GC_DAYS` isn't enforced.
+V2 is implemented and unit-tested, and runs locally against **mainnet** (`HL_ENV=mainnet`) with the leaderboard off. The agent approval has run against real Hyperliquid (2026-10-20); that first run found the `extraAgents` parsing bug and led to one agent per wallet. A full end-to-end copy then ran on production with a $50 account (2026-10-21 → 25): all 18 orders matched HL's fills, and the recorded shares matched the live positions. Also open: `AGENT_KEY_GC_DAYS` isn't enforced.

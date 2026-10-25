@@ -413,7 +413,8 @@ def _execute_copy_locked(
             if pnl_pct < -(abs(stop_loss_pct) / 100):
                 _cancel_open_orders(exchange, parent_address, coin, sub_id)
                 fill = _place(sub_id, parent_address, coin, "stop_loss",
-                              exchange.market_close, coin, sz=abs(my_szi), builder=_builder())
+                              exchange.market_close, coin, sz=abs(my_szi),
+                              cloid=_cloid_for_sub(sub_id), builder=_builder())
                 if fill:
                     left = _after_close(coin, my_szi, fill[0])
                     _upsert_position(sub_id, coin, left, my_entry if left else 0.0)
@@ -439,7 +440,8 @@ def _execute_copy_locked(
         if ideal_szi == 0.0 and my_szi != 0.0:
             _cancel_open_orders(exchange, parent_address, coin, sub_id)
             fill = _place(sub_id, parent_address, coin, "close",
-                          exchange.market_close, coin, sz=abs(my_szi), builder=_builder())
+                          exchange.market_close, coin, sz=abs(my_szi),
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
             if fill:
                 left = _after_close(coin, my_szi, fill[0])
                 _upsert_position(sub_id, coin, left, my_entry if left else 0.0)
@@ -453,7 +455,8 @@ def _execute_copy_locked(
         if ideal_szi != 0.0 and my_szi != 0.0 and (ideal_szi > 0) != (my_szi > 0):
             _cancel_open_orders(exchange, parent_address, coin, sub_id)
             fill = _place(sub_id, parent_address, coin, "flip_close",
-                          exchange.market_close, coin, sz=abs(my_szi), builder=_builder())
+                          exchange.market_close, coin, sz=abs(my_szi),
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
             if not fill:
                 continue
             left = _after_close(coin, my_szi, fill[0])
@@ -464,7 +467,7 @@ def _execute_copy_locked(
             new_is_long = ideal_szi > 0
             fill = _place(sub_id, parent_address, coin, "flip_open",
                           exchange.market_open, coin, new_is_long, abs(ideal_szi),
-                          builder=_builder())
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
             if not fill or not fill[0]:
                 # The close went through; record the flat position it left.
                 _upsert_position(sub_id, coin, 0.0, 0.0)
@@ -482,14 +485,10 @@ def _execute_copy_locked(
 
         # min_usd guard
         if abs(delta) * price < min_usd:
+            # Logged only: every fill re-checks every coin, so a notification
+            # here repeats on each fill (25,000 a day for one copy, 2026-10).
             logger.info("sub=%d coin=%s decision=skip_below_min value=%.2f min_usd=%.2f",
                         sub_id, coin, abs(delta) * price, min_usd)
-            if abs(delta) * price > 0:
-                try:
-                    notify_order_skipped(parent_address, coin,
-                        f"Order too small (${abs(delta) * price:,.2f}) — minimum is ${min_usd:,.2f}.")
-                except Exception:
-                    pass
             continue
 
         # Case 3: reducing this sub's share
@@ -497,7 +496,8 @@ def _execute_copy_locked(
             surplus = _round_sz(coin, abs(my_szi) - abs(ideal_szi))
             _cancel_open_orders(exchange, parent_address, coin, sub_id)
             fill = _place(sub_id, parent_address, coin, "reduce",
-                          exchange.market_close, coin, sz=surplus, builder=_builder())
+                          exchange.market_close, coin, sz=surplus,
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
             if fill:
                 left = _after_close(coin, my_szi, fill[0])
                 _upsert_position(sub_id, coin, left, my_entry if left else 0.0)
@@ -515,7 +515,8 @@ def _execute_copy_locked(
 
         if price_tolerance_pct == -1 or target_entry <= 0:
             fill = _place(sub_id, parent_address, coin, "market_open",
-                          exchange.market_open, coin, is_long, amount, builder=_builder())
+                          exchange.market_open, coin, is_long, amount,
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
         else:
             lmt_px = (target_entry * (abs(my_szi) + amount) - abs(my_szi) * my_entry) / amount
 
@@ -529,12 +530,6 @@ def _execute_copy_locked(
             if not favorable:
                 logger.info("sub=%d coin=%s decision=skip_unfavorable price=%.6g limit=%.6g "
                             "target_entry=%.6g", sub_id, coin, price, lmt_px, target_entry)
-                try:
-                    side = "buy" if is_long else "sell"
-                    notify_order_skipped(parent_address, coin,
-                        f"Price unfavorable for {side} — current ${price:,.2f} vs limit ${lmt_px:,.2f}.")
-                except Exception:
-                    pass
                 continue
 
             # IOC at the invariant price: fills only at lmt_px or better, and
@@ -567,7 +562,8 @@ def _close_all_for_sub(sub_id: int, parent_address: str, exchange, parent_pos: d
                 continue
             _cancel_open_orders(exchange, parent_address, tp.coin, sub_id)
             fill = _place(sub_id, parent_address, tp.coin, "drawdown_close",
-                          exchange.market_close, tp.coin, sz=abs(tp.szi), builder=_builder())
+                          exchange.market_close, tp.coin, sz=abs(tp.szi),
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
             if fill:
                 left = _after_close(tp.coin, tp.szi, fill[0])
                 _upsert_position(sub_id, tp.coin, left, tp.entry_px if left else 0.0)
