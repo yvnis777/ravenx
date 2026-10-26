@@ -47,7 +47,8 @@ export function TraderHeader({ trader, onBack, onCopy }: TraderHeaderProps) {
     if (isAuthenticated) return onCopy()
     if (!isConnected) return open()
     try {
-      await login()
+      // A second tap while waiting resends a request the wallet may have lost
+      await login({ restart: isSigningIn })
       onCopy()
     } catch {
       /* authError is shown under the button */
@@ -87,7 +88,7 @@ export function TraderHeader({ trader, onBack, onCopy }: TraderHeaderProps) {
       </button>
 
       <div className="relative ml-1">
-        <Button size="sm" onClick={handleCopy} disabled={isSigningIn}>
+        <Button size="sm" onClick={handleCopy}>
           {isSigningIn ? 'Check your wallet…' : 'Copy Trade'}
         </Button>
         {authError && !isAuthenticated && !isSigningIn && (

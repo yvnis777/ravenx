@@ -76,6 +76,9 @@ app/
   - Periods are 1D / 7D / 30D / All — `portfolio` has no 90-day window.
 - **Subscriptions**: backend (`/copy/*`) via `useSubscriptions`.
 - **My Copies dashboard**: the user's own account is `useTrader(own address)`, read live from HL. `useCopyPositions` reads each copy's recorded share (`/copy/positions`), and `lib/attribution.ts` matches the two: per position, which copies hold part of it and what's manual; shares missing on HL are flagged. Activity is the notifications feed.
+  - **Per-copy PnL and trades**: `useCopyFills` reads the user's fills since their first copy started, and `lib/copy-fills.ts` splits them by copy using the cloid's first 4 bytes (the sub id). Realized = closed PnL − fees. Closes carried no cloid before 2026-10-25 21:35 UTC (`CLOSES_TAGGED_SINCE`); an older untagged close goes to a copy only when exactly one copy had traded that coin before it.
+  - Each copy row expands (`CopyDetail`) into the copied wallet's live state (`useTrader`) and the copy's own fills.
+  - Stopping asks whether to close the copy's positions (`StopChoice`, also in `CopyModal`).
 - **Equity is mode-aware** (`lib/hyperliquid.ts` → `fetchAccountEquity`): in HL's unified account the perps state's `accountValue` is only collateral held for positions; equity is the spot USDC total. `useTrader` uses it, so the trader page and the dashboard both show real equity. The backend reads it the same way.
 
 ## Copy Flow
@@ -86,7 +89,7 @@ app/
 2. **Agent** — `POST /agent/generate`. If it returns `needs_approval: false`, the wallet's RavenX agent is still approved and is reused with no signature. Otherwise the user signs `ApproveAgent` under the fixed name `AGENT_NAME` (`ravenx`), submitted to HL's `/exchange`; the same name replaces the previous agent instead of using another of HL's few named-agent slots.
 3. `POST /copy/start` — the backend re-verifies both approvals on-chain before creating the subscription.
 
-**Scale:** typed freely up to 1000% (the backend's cap; the slider covers 10–200%). `CopyModal` sizes the target's open positions to the user's equity (`lib/copy-sizing.ts`) and suggests a minimum scale: the smallest that puts the positions making up 90% of the target's exposure over HL's $10 order minimum (with 10% headroom for lot rounding). Below it, a warning says how many positions would be skipped. It also shows the resulting exposure as a multiple of equity, flagged above 10×. `MIN_ORDER_USD` must match the backend's `MIN_POSITION_SIZE_USD`.
+**Scale:** typed freely up to 1000% (the backend's cap; the slider covers 10–200%). `CopyModal` sizes the target's opening trades from the last 7 days (`useFills`), or its open positions if it hasn't traded, to the user's equity (`lib/copy-sizing.ts`). It suggests the smallest scale that puts 80% of those trades, **by count**, over HL's $10 order minimum, with 10% headroom for lot rounding. Weighting by volume let a few huge trades hide that most were skipped. Below that scale, a warning says how many trades would be skipped. The dialog always says something: still checking, no funds, nothing to size, or the result. It also shows the exposure at the chosen scale as a multiple of equity, flagged above 10×. `__tests__/components/CopyModal.test.tsx` renders it signed in. `MIN_ORDER_USD` must match the backend's `MIN_POSITION_SIZE_USD`.
 
 The fee is signed **first**, so declining it means no agent was ever created. `lib/fee.ts` is the single source of truth for the rate and must match the backend's `BUILDER_ADDRESS` / `BUILDER_FEE_TENTHS_BPS`.
 
@@ -98,6 +101,7 @@ The fee is signed **first**, so declining it means no agent was ever created. `l
 - **`lib/fee.ts` has no wagmi import** on purpose, so the landing page can show pricing without pulling the wallet stack into its bundle. `useAgentApproval` re-exports it for convenience.
 - **Pricing copy is derived, never written by hand.** The landing page and CopyModal both read `FEES_ENABLED` / `feeRateLabel()`, so they cannot advertise a price different from the one charged.
 - **JWT key**: `localStorage.ravenx_token`. The Axios instance attaches it; the 401 interceptor only clears it for non-public routes.
+- **No automatic sign-in for a restored session.** A fresh connection signs in on its own, but a session wagmi restores on page load (`useAccountEffect` → `isReconnected`) waits for a tap: a phone's wallet app never shows a request it didn't open itself, and the button sat disabled on "Check your wallet…" (2026-10-26). Sign-in buttons are never disabled while waiting; a tap then calls `login({ restart: true })`, which sends a fresh request.
 - **Route groups**: `(app)` is public with `TopNav`; `(protected)` redirects when unauthenticated.
 - **Period PnL**: dashboard filters by 1D/7D/30D/90D/All using `pnl_1d`…`pnl_90d`, with period-specific win rate and trade counts.
 - **Wallet connection** uses Reown AppKit — there is no custom connector modal.

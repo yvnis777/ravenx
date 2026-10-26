@@ -1,8 +1,6 @@
 import { StatTile } from '@/components/ui/StatTile'
 import { fmtMoney } from '@/lib/format'
-
-/** HL's minimum order value: smaller copies are skipped. */
-const MIN_ORDER_USD = 10
+import { MIN_ORDER_USD } from '@/lib/copy-sizing'
 
 interface AccountStripProps {
   equity: number | undefined
@@ -10,15 +8,24 @@ interface AccountStripProps {
   upnl: number
   marginUsed: number
   activeCopies: number
+  /** Closed PnL minus fees over every copy's fills; undefined while loading. */
+  realized?: number
 }
 
 const tone = (n: number): 'profit' | 'loss' | 'neutral' => (n > 0 ? 'profit' : n < 0 ? 'loss' : 'neutral')
 
-export function AccountStrip({ equity, exposure, upnl, marginUsed, activeCopies }: AccountStripProps) {
+export function AccountStrip({
+  equity,
+  exposure,
+  upnl,
+  marginUsed,
+  activeCopies,
+  realized,
+}: AccountStripProps) {
   const leverage = equity ? exposure / equity : 0
   return (
     <div className="border-b border-line">
-      <div className="grid grid-cols-2 gap-3 px-3 py-3 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 px-3 py-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Equity" value={fmtMoney(equity)} />
         <StatTile
           label="Exposure"
@@ -26,6 +33,12 @@ export function AccountStrip({ equity, exposure, upnl, marginUsed, activeCopies 
           sub={equity ? `${leverage.toFixed(2)}× equity` : undefined}
         />
         <StatTile label="Unrealized PnL" value={fmtMoney(upnl, true)} tone={tone(upnl)} />
+        <StatTile
+          label="Realized (copies)"
+          value={realized === undefined ? '—' : fmtMoney(realized, true)}
+          tone={realized === undefined ? 'neutral' : tone(realized)}
+          sub="after fees"
+        />
         <StatTile label="Margin used" value={fmtMoney(marginUsed)} />
         <StatTile label="Active copies" value={String(activeCopies)} />
       </div>

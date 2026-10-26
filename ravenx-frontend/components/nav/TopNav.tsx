@@ -105,7 +105,11 @@ export function TopNav() {
         <NotificationDropdown isAuthenticated={isAuthenticated} />
 
         {isConnected && address && !isAuthenticated && (
-          <Button size="sm" disabled={isSigningIn} onClick={() => login().catch(() => {})}>
+          <Button
+            size="sm"
+            onClick={() => login({ restart: isSigningIn }).catch(() => {})}
+            title={isSigningIn ? 'Nothing in your wallet? Tap to send the request again' : undefined}
+          >
             {isSigningIn ? 'Check your wallet…' : 'Sign in'}
           </Button>
         )}

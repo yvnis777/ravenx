@@ -6,6 +6,8 @@ import { useSubscriptions } from '@/hooks/useSubscriptions'
 import { useCopyPositions } from '@/hooks/useCopyPositions'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useTrader } from '@/hooks/useTrader'
+import { useCopyFills } from '@/hooks/useCopyFills'
+import { utcMs } from '@/lib/copy-fills'
 import { attribute } from '@/lib/attribution'
 import { truncateAddress } from '@/lib/format'
 import { LEADERBOARD_ENABLED } from '@/lib/features'
@@ -26,6 +28,13 @@ export default function CopiesPage() {
   const { data: account, isError: accountError } = useTrader(address ?? '')
   const { data: shares = [] } = useCopyPositions()
   const { data: activity } = useNotifications(isAuthenticated)
+  // Every copy's fills, from when the first one started
+  const since = subscriptions.reduce<number | null>((min, s) => {
+    const t = utcMs(s.created_at)
+    return t !== null && (min === null || t < min) ? t : min
+  }, null)
+  const { data: trades, isLoading: tradesLoading } = useCopyFills(address, since)
+  const realized = [...(trades?.values() ?? [])].reduce((sum, t) => sum + t.realized - t.fees, 0)
 
   const active = subscriptions.filter((s) => s.is_active)
   const stopped = subscriptions.filter((s) => !s.is_active)
@@ -54,6 +63,7 @@ export default function CopiesPage() {
           upnl={account?.upnl ?? 0}
           marginUsed={marginUsed}
           activeCopies={active.length}
+          realized={trades ? realized : undefined}
         />
         {accountError && (
           <p role="alert" className="border-b border-line px-3 py-2 text-[11px] text-warn">
@@ -80,7 +90,13 @@ export default function CopiesPage() {
                   </Button>
                 </div>
               ) : (
-                <CopiesTable active={active} stopped={stopped} perCopy={perCopy} />
+                <CopiesTable
+                  active={active}
+                  stopped={stopped}
+                  perCopy={perCopy}
+                  trades={trades}
+                  tradesLoading={tradesLoading && since !== null}
+                />
               )}
             </Panel>
 

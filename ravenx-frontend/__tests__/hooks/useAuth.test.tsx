@@ -6,6 +6,8 @@ import { useAuth, SIGN_TIMEOUT_MS, resetSignInState } from '@/hooks/useAuth'
 // Mock wagmi hooks
 vi.mock('wagmi', () => ({
   useAccount: vi.fn(() => ({ address: '0xabc', isConnected: true })),
+  // A fresh connection: wagmi reports nothing restored
+  useAccountEffect: vi.fn(),
   useDisconnect: vi.fn(() => ({ disconnectAsync: vi.fn() })),
   useSignMessage: vi.fn(() => ({
     signMessageAsync: vi.fn().mockResolvedValue('0xsignature'),

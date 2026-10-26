@@ -52,7 +52,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     )
   }
 
-  // Connected but not signed in: the signature step is pending or failed
+  // Connected but not signed in: restored session, pending signature, or a failed
+  // one. Every state has a button — a restored session isn't signed in
+  // automatically, and a phone's wallet can lose a request.
   if (!isAuthenticated && isConnected) {
     return (
       <div className="flex h-screen items-center justify-center px-4">
@@ -61,23 +63,32 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             <>
               <p className="text-sm text-fg">Sign-in didn&apos;t complete</p>
               <p className="text-xs text-muted" role="alert">{authError}</p>
-              <div className="mt-1 flex gap-2">
-                <Button onClick={() => login().catch(() => {})}>Try again</Button>
-                <Button variant="ghost" onClick={() => logout()}>Disconnect</Button>
-              </div>
+            </>
+          ) : isSigningIn ? (
+            <>
+              <Spinner size="lg" />
+              <p className="text-sm text-fg">Confirm the sign-in message in your wallet</p>
+              <p className="text-xs text-muted">
+                Signing is free and doesn&apos;t send a transaction. Nothing in your wallet app?
+                Send the request again.
+              </p>
             </>
           ) : (
             <>
-              <Spinner size="lg" />
-              <p className="text-sm text-fg">
-                {isSigningIn ? 'Confirm the sign-in message in your wallet' : 'Signing in…'}
-              </p>
+              <p className="text-sm text-fg">Sign in to see your copies</p>
               <p className="text-xs text-muted">
-                Signing is free and doesn&apos;t send a transaction. If no popup appeared,
-                open your wallet extension or app.
+                It&apos;s a free signature in your wallet, not a transaction.
               </p>
             </>
           )}
+          <div className="mt-1 flex gap-2">
+            <Button onClick={() => login({ restart: isSigningIn }).catch(() => {})}>
+              {authError ? 'Try again' : isSigningIn ? 'Send again' : 'Sign in'}
+            </Button>
+            <Button variant="ghost" onClick={() => logout()}>
+              Disconnect
+            </Button>
+          </div>
         </div>
       </div>
     )

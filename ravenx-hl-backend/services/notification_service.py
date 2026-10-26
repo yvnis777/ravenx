@@ -66,13 +66,13 @@ def notify_copy_started(parent_address: str, target_address: str):
     db.session.commit()
 
 
-def notify_copy_stopped(parent_address: str, target_address: str):
+def notify_copy_stopped(parent_address: str, target_address: str, note: str = ""):
     short_target = f"{target_address[:6]}...{target_address[-4:]}"
     n = Notification(
         parent_address=parent_address,
         type="copy_stopped",
         title="Copy Trading Stopped",
-        message=f"Stopped copying {short_target}.",
+        message=f"Stopped copying {short_target}.{' ' + note if note else ''}",
     )
     db.session.add(n)
     db.session.commit()

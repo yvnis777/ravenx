@@ -6,13 +6,21 @@ import { assertBackendNetwork } from '@/lib/hl-env'
 import { useAuth } from '@/hooks/useAuth'
 import { useSubscriptions } from '@/hooks/useSubscriptions'
 import { useTrader } from '@/hooks/useTrader'
+import { useFills } from '@/hooks/useFills'
 import { useAgentApproval, BUILDER_ADDRESS, feeRateLabel } from '@/hooks/useAgentApproval'
 import { useAppKit } from '@reown/appkit/react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
-import { checkSizing, MIN_ORDER_USD, SCALE_LIMIT, type SizingCheck } from '@/lib/copy-sizing'
+import {
+  checkSizing,
+  MIN_ORDER_USD,
+  openingTradeValues,
+  SCALE_LIMIT,
+  type SizingCheck,
+} from '@/lib/copy-sizing'
 import { fmtMoney } from '@/lib/format'
+import { StopChoice } from '@/components/copies/StopCopy'
 import type { Subscription } from '@/types'
 
 const COPY_ERRORS: Record<string, string> = {
@@ -109,18 +117,59 @@ const HIGH_LEVERAGE = 10
 const WARN_BOX =
   'flex flex-col gap-2 rounded-md border border-[rgba(240,180,41,0.3)] bg-[rgba(240,180,41,0.08)] p-2.5'
 
+type Sizing =
+  | { kind: 'loading' }
+  | { kind: 'unavailable' }
+  | { kind: 'no-funds' }
+  | { kind: 'nothing-to-size' }
+  | { kind: 'check'; check: SizingCheck }
+
 /** The scale this trader needs on this account, and what the chosen one copies. */
 function SizingNotice({
-  check,
+  sizing,
   scalingPct,
   onScale,
 }: {
-  check: SizingCheck
+  sizing: Sizing
   scalingPct: number
   onScale: (pct: number) => void
 }) {
+  if (sizing.kind === 'loading') {
+    return <p className="text-[11px] text-faint">Checking this trader&apos;s trade sizes…</p>
+  }
+  if (sizing.kind === 'unavailable') {
+    return (
+      <p className="text-[11px] text-faint">
+        Couldn&apos;t load this trader&apos;s trades from Hyperliquid to check sizes. Trades
+        under ${MIN_ORDER_USD} for your account are skipped.
+      </p>
+    )
+  }
+  if (sizing.kind === 'no-funds') {
+    return (
+      <div className={WARN_BOX}>
+        <p className="text-xs font-medium text-warn">No funds on your Hyperliquid account</p>
+        <p className="text-[11px] text-muted">
+          Copies are sized to your equity, so nothing would be copied. Deposit USDC on
+          Hyperliquid first.
+        </p>
+      </div>
+    )
+  }
+  if (sizing.kind === 'nothing-to-size') {
+    return (
+      <p className="text-[11px] text-faint">
+        This trader hasn&apos;t opened a trade in the last 7 days and holds no positions, so
+        there&apos;s nothing to size yet. Trades under ${MIN_ORDER_USD} for your account are
+        skipped.
+      </p>
+    )
+  }
+
+  const { check } = sizing
   const small = check.total - check.copied
-  const exposure = (
+  const noun = check.basis === 'trades' ? 'trades from the last 7 days' : 'open positions'
+  const exposure = check.exposure !== null && check.leverage !== null && (
     <p className={`num text-[11px] ${check.leverage > HIGH_LEVERAGE ? 'text-warn' : 'text-faint'}`}>
       The trader&apos;s current positions at {scalingPct}%: {fmtMoney(check.exposure)},{' '}
       {check.leverage.toFixed(1)}× your equity.
@@ -132,9 +181,10 @@ function SizingNotice({
       <div className={WARN_BOX}>
         <p className="text-xs font-medium text-warn">Account too small for this trader</p>
         <p className="text-[11px] text-muted">
-          Hyperliquid rejects orders under ${MIN_ORDER_USD}. This trader&apos;s positions are so
-          large next to your account that even {SCALE_LIMIT}% leaves most of them under that, so
-          you would miss most of their trades. Add funds to your account to copy them.
+          Hyperliquid rejects orders under ${MIN_ORDER_USD}. This trader&apos;s trades are so
+          large next to your account that even {SCALE_LIMIT}% leaves most of them under that.
+          At {scalingPct}%, {small} of their {check.total} {noun} would be skipped. Add funds to
+          your account to copy them.
         </p>
         {exposure}
       </div>
@@ -147,8 +197,8 @@ function SizingNotice({
         <p className="num text-xs font-medium text-warn">Suggested minimum scale: {check.minPct}%</p>
         <p className="text-[11px] text-muted">
           Hyperliquid rejects orders under ${MIN_ORDER_USD}. At {scalingPct}%, {small} of the
-          trader&apos;s {check.total} open positions come out smaller than that for your account
-          and would be skipped, so you would miss a lot of this trader&apos;s trades.
+          trader&apos;s {check.total} {noun} come out smaller than that for your account and
+          would be skipped, so you would miss a lot of this trader&apos;s trades.
         </p>
         <Button
           size="sm"
@@ -167,7 +217,7 @@ function SizingNotice({
     <div className="flex flex-col gap-1">
       <p className="num text-[11px] text-faint">
         Suggested minimum scale: {check.minPct}%. At {scalingPct}%, {check.copied} of the
-        trader&apos;s {check.total} open positions are ${MIN_ORDER_USD} or more for your account.
+        trader&apos;s {check.total} {noun} are ${MIN_ORDER_USD} or more for your account.
       </p>
       {exposure}
     </div>
@@ -199,6 +249,7 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
   const [copyExistingMode, setCopyExistingMode] = useState<'none' | 'favorable' | 'market'>('none')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
   const [statusMsg, setStatusMsg] = useState('')
   const [targetName, setTargetName] = useState('')
@@ -206,17 +257,23 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
   const activeSub = subscriptions.find(
     (s) => s.target_address.toLowerCase() === targetAddress.toLowerCase() && s.is_active
   )
-  const { data: target } = useTrader(targetAddress)
-  const { data: me } = useTrader(isAuthenticated ? (address ?? '') : '')
-  const sizing =
-    target && me
-      ? checkSizing(
-          me.perp_equity,
-          target.perp_equity,
-          target.open_positions.map((p) => p.position_value ?? p.szi * p.entry_px),
-          scalingPct
-        )
-      : null
+  const targetQuery = useTrader(targetAddress)
+  const meQuery = useTrader(isAuthenticated ? (address ?? '') : '')
+  const fillsQuery = useFills(targetAddress, '7d')
+  const sizing = ((): Sizing => {
+    const [target, me, fills] = [targetQuery.data, meQuery.data, fillsQuery.data]
+    if (targetQuery.isError || meQuery.isError || fillsQuery.isError) return { kind: 'unavailable' }
+    if (!target || !me || !fills) return { kind: 'loading' }
+    if (!(me.perp_equity > 0)) return { kind: 'no-funds' }
+    const check = checkSizing({
+      myEquity: me.perp_equity,
+      targetEquity: target.perp_equity,
+      tradeValues: openingTradeValues(fills.fills),
+      positionValues: target.open_positions.map((p) => p.position_value ?? p.szi * p.entry_px),
+      scalingPct,
+    })
+    return check ? { kind: 'check', check } : { kind: 'nothing-to-size' }
+  })()
 
   const activeSubs = subscriptions.filter((s) => s.is_active)
   const cumulativeScaling = activeSubs.reduce((sum, s) => sum + s.scaling_pct, 0) + scalingPct
@@ -326,18 +383,6 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
     },
   })
 
-  const stopMutation = useMutation({
-    mutationFn: () => api.post('/copy/stop', { subscription_id: activeSub?.id }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
-      onClose()
-    },
-    onError: (e: unknown) => {
-      const err = e as { response?: { data?: { error?: string } } }
-      setError(err?.response?.data?.error ?? 'Failed to stop copying')
-    },
-  })
-
   const truncated = `${targetAddress.slice(0, 6)}…${targetAddress.slice(-4)}`
   const hasCustomSettings =
     priceMode !== 'default' || stopLossEnabled || maxDrawdownEnabled || maxPositionEnabled
@@ -410,13 +455,7 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
         </p>
       </div>
 
-      {sizing && (
-        <SizingNotice
-          check={sizing}
-          scalingPct={scalingPct}
-          onScale={setScale}
-        />
-      )}
+      <SizingNotice sizing={sizing} scalingPct={scalingPct} onScale={setScale} />
 
       <button
         type="button"
@@ -590,9 +629,14 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
                     Sign in with your wallet to start copy-trading. It&apos;s a free signature,
                     not a transaction.
                   </p>
-                  <Button size="sm" disabled={isSigningIn} onClick={() => login().catch(() => {})}>
+                  <Button size="sm" onClick={() => login({ restart: isSigningIn }).catch(() => {})}>
                     {isSigningIn ? 'Check your wallet…' : 'Sign in'}
                   </Button>
+                  {isSigningIn && (
+                    <p className="text-center text-[11px] text-faint">
+                      Nothing in your wallet? Tap again to resend the request.
+                    </p>
+                  )}
                   {authError && !isSigningIn && (
                     <p role="alert" className="text-center text-[11px] text-warn">
                       {authError}
@@ -629,19 +673,26 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
                 </Button>
               </div>
               {error && <p className="text-xs text-loss">{error}</p>}
-              <div className="flex justify-end">
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => {
-                    setError('')
-                    stopMutation.mutate()
-                  }}
-                  disabled={stopMutation.isPending}
-                >
-                  {stopMutation.isPending ? <Spinner size="sm" /> : 'Stop copying'}
-                </Button>
-              </div>
+              {stopping ? (
+                <StopChoice
+                  subId={activeSub.id}
+                  onDone={(problem) => (problem ? setError(problem) : onClose())}
+                  onCancel={() => setStopping(false)}
+                />
+              ) : (
+                <div className="flex justify-end">
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => {
+                      setError('')
+                      setStopping(true)
+                    }}
+                  >
+                    Stop copying
+                  </Button>
+                </div>
+              )}
             </>
           ) : activeSub && editing ? (
             <>
@@ -656,11 +707,11 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
                   size="sm"
                   onClick={() => {
                     setError('')
-                    stopMutation.mutate()
+                    setEditing(false)
+                    setStopping(true)
                   }}
-                  disabled={stopMutation.isPending}
                 >
-                  {stopMutation.isPending ? <Spinner size="sm" /> : 'Stop'}
+                  Stop
                 </Button>
                 <Button
                   variant="ghost"

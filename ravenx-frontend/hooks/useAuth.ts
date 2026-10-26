@@ -1,7 +1,14 @@
 // hooks/useAuth.ts
 'use client'
-import { useCallback, useEffect, useState } from 'react'
-import { useAccount, useChainId, useDisconnect, useSignMessage, useSwitchChain } from 'wagmi'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useAccount,
+  useAccountEffect,
+  useChainId,
+  useDisconnect,
+  useSignMessage,
+  useSwitchChain,
+} from 'wagmi'
 import { api } from '@/lib/api'
 
 const ARBITRUM_MAINNET_CHAIN_ID = 42161
@@ -65,6 +72,15 @@ export function useAuth() {
   const chainId = useChainId()
   const { switchChainAsync } = useSwitchChain()
 
+  // A session restored on page load gets no automatic sign-in: on a phone the
+  // wallet app never shows a request it didn't open itself, so it hung
+  // unanswered behind a disabled button (2026-10-26). The user taps Sign in.
+  useAccountEffect({
+    onConnect({ address: connected, isReconnected }) {
+      if (isReconnected) signIn.autoTriedFor = connected
+    },
+  })
+
   const ensureCorrectChain = useCallback(async () => {
     if (chainId !== ARBITRUM_MAINNET_CHAIN_ID) {
       await switchChainAsync({ chainId: ARBITRUM_MAINNET_CHAIN_ID })
@@ -78,6 +94,9 @@ export function useAuth() {
     return null
   })
   const [isSigningIn, setIsSigningIn] = useState(false)
+  // This component's newest sign-in; an older one that settles later must
+  // not end the newer one's "signing in" state.
+  const latest = useRef<Promise<string> | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
 
   // Sync token state if it gets cleared externally (e.g. by 401 interceptor)
@@ -106,13 +125,19 @@ export function useAuth() {
     }
   }, [token])
 
-  const login = useCallback(async () => {
+  /**
+   * Sign in, joining one already in progress rather than prompting again.
+   * `restart` sends a fresh request instead: for a prompt the wallet lost,
+   * which would otherwise only give up after SIGN_TIMEOUT_MS.
+   */
+  const login = useCallback(async ({ restart = false }: { restart?: boolean } = {}) => {
     if (!address) throw new Error('Wallet address not available')
     setIsSigningIn(true)
     setAuthError(null)
+    if (restart) signIn.inflight = null
+    let attempt: Promise<string> | null = null
     try {
-      // Join a sign-in already in progress rather than prompting again.
-      signIn.inflight ??= (async () => {
+      attempt = signIn.inflight ??= (async () => {
         await ensureCorrectChain()
         const { data } = await api.get<{ nonce: string; message: string }>(
           `/auth/nonce?address=${address}`
@@ -129,15 +154,19 @@ export function useAuth() {
         localStorage.setItem('ravenx_token', auth.access_token)
         window.dispatchEvent(new StorageEvent('storage', { key: 'ravenx_token', newValue: auth.access_token }))
         return auth.access_token
-      })().finally(() => {
-        signIn.inflight = null
-      })
-      setToken(await signIn.inflight)
+      })()
+      const mine = attempt
+      mine.finally(() => {
+        if (signIn.inflight === mine) signIn.inflight = null
+      }).catch(() => {})
+      latest.current = mine
+      setToken(await mine)
     } catch (err) {
-      setAuthError(describeAuthError(err))
+      // A request replaced by a restart fails quietly
+      if (latest.current === attempt) setAuthError(describeAuthError(err))
       throw err
     } finally {
-      setIsSigningIn(false)
+      if (latest.current === attempt) setIsSigningIn(false)
     }
   }, [address, signMessageAsync, ensureCorrectChain])
 

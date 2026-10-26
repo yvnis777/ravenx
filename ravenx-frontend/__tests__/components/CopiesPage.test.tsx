@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import CopiesPage from '@/app/(protected)/copies/page'
 
@@ -32,6 +32,17 @@ const state = {
 vi.mock('@/hooks/useSubscriptions', () => ({ useSubscriptions: () => ({ data: state.subs, isLoading: false }) }))
 vi.mock('@/hooks/useTrader', () => ({ useTrader: () => ({ data: state.account, isError: false }) }))
 vi.mock('@/hooks/useCopyPositions', () => ({ useCopyPositions: () => ({ data: state.shares }) }))
+const post = vi.fn().mockResolvedValue({ data: { closing: { closed: ['HYPE'], failed: [] } } })
+vi.mock('@/lib/api', () => ({ api: { post: (...a: unknown[]) => post(...a) } }))
+const trades = new Map([
+  [3, {
+    realized: 2.5,
+    fees: 0.1,
+    fills: [{ coin: 'HYPE', dir: 'Close Long', sz: '0.2', px: '45', closedPnl: '2.5', fee: '0.05',
+              time: Date.UTC(2026, 9, 26, 14, 10), hash: '0x1', oid: 1 }],
+  }],
+])
+vi.mock('@/hooks/useCopyFills', () => ({ useCopyFills: () => ({ data: trades, isLoading: false }) }))
 vi.mock('@/hooks/useNotifications', () => ({ useNotifications: () => ({ data: { notifications: state.notes } }) }))
 
 function renderPage() {
@@ -86,5 +97,30 @@ describe('My Copies dashboard', () => {
     renderPage()
     expect(screen.getByText('Skipped')).toBeInTheDocument()
     expect(screen.getByText(/Order too small/)).toBeInTheDocument()
+  })
+
+  it("shows each copy's realized PnL after fees", () => {
+    renderPage()
+    const copiesPanel = screen.getByRole('heading', { name: 'Copies' }).closest('section')!
+    const row = within(copiesPanel).getByText('0x1a94…a538').closest('tr')!
+    expect(within(row).getByText('+$2.40')).toBeInTheDocument()
+    expect(screen.getByText('Realized (copies)')).toBeInTheDocument()
+  })
+
+  it("opens a copy's trades and the trader's live state", () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /Show details for 0x1a94…a538/ }))
+    expect(screen.getByText('Trader now')).toBeInTheDocument()
+    expect(screen.getByText('Close Long')).toBeInTheDocument()
+    expect(screen.getByText(/1 fill · closed PnL/)).toBeInTheDocument()
+  })
+
+  it('asks whether to close positions when stopping', async () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop & close positions' }))
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/copy/stop', { subscription_id: 3, close_positions: true })
+    )
   })
 })

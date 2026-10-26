@@ -151,7 +151,9 @@ def start_copying():
 @jwt_required()
 def stop_copying():
     parent = get_jwt_identity().lower()
-    sub_id = (request.get_json() or {}).get("subscription_id")
+    body = request.get_json() or {}
+    sub_id = body.get("subscription_id")
+    close_positions = bool(body.get("close_positions"))
     if not sub_id:
         return jsonify({"error": "subscription_id required"}), 400
 
@@ -163,8 +165,25 @@ def stop_copying():
     sub.stopped_at = datetime.utcnow()
     db.session.commit()
 
-    # Cancel any of this sub's orders still open on the parent's account
     agent = wallet_agent(sub.parent_address)
+
+    # Close this copy's positions now, while the user waits for the result.
+    # The copy is already stopped: whatever fails to close stays on the
+    # account for the user to close on Hyperliquid.
+    closing = None
+    if close_positions:
+        if agent is None:
+            closing = {"closed": [], "failed": [], "error": "No agent to sign with"}
+        else:
+            from services.copy_service import close_stopped_sub
+            try:
+                closing = close_stopped_sub(sub.id, sub.parent_address, agent.agent_private_key)
+            except Exception as e:
+                logger.warning("Closing positions on stop failed for sub=%d: %s", sub.id, e)
+                db.session.rollback()
+                closing = {"closed": [], "failed": [], "error": "Couldn't reach Hyperliquid"}
+
+    # Cancel any of this sub's orders still open on the parent's account
     if agent:
         flask_app = _app._get_current_object()
         parent_addr = sub.parent_address
@@ -192,8 +211,13 @@ def stop_copying():
                     logger.warning("Could not cancel orders on stop for %s: %s", addr, e)
         threading.Thread(target=_cancel_all, daemon=True).start()
 
+    note = ""
+    if closing and closing.get("error"):
+        note = f"Positions were not closed: {closing['error']}. Close them on Hyperliquid."
+    elif closing and closing["failed"]:
+        note = f"Couldn't close {', '.join(closing['failed'])}. Close it on Hyperliquid."
     try:
-        notify_copy_stopped(sub.parent_address, sub.target_address)
+        notify_copy_stopped(sub.parent_address, sub.target_address, note)
     except Exception:
         pass
 
@@ -206,7 +230,10 @@ def stop_copying():
     if remaining == 0:
         WebSocketManager.get_instance().unsubscribe(sub.target_address)
 
-    return jsonify(sub.to_dict())
+    result = sub.to_dict()
+    if closing is not None:
+        result["closing"] = closing
+    return jsonify(result)
 
 
 @copy_bp.route("/subscriptions", methods=["GET"])

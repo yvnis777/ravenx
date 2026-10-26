@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (101 tests) |
+| Tests | pytest (107 tests) |
 
 ## Quick Start
 
@@ -117,7 +117,7 @@ The leaderboard is built from our own scanner — no dependency on any HL leader
 | POST | `/auth/verify` | — | Submit signature → JWT |
 | POST | `/agent/generate` | JWT | The wallet's agent if still approved on HL (`needs_approval: false`), else a new one to approve |
 | POST | `/copy/start` | JWT | Start copying (verifies agent + builder fee on HL) |
-| POST | `/copy/stop` | JWT | Stop copying; cancels this sub's open orders |
+| POST | `/copy/stop` | JWT | Stop copying; cancels this sub's open orders. `close_positions: true` also closes its share of each coin and returns `closing: {closed, failed}` |
 | GET | `/copy/subscriptions` | JWT | My subscriptions |
 | GET | `/copy/positions` | JWT | Each active copy's recorded share per coin (database only; feeds the My Copies dashboard) |
 | PATCH | `/copy/subscriptions/<id>` | JWT | Update scaling_pct / risk_params / target_name |
@@ -143,7 +143,7 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 4. Frontend builds the `ApproveAgent` typed data with `agentName: "ravenx"`, user signs, frontend submits to `https://api.hyperliquid.xyz/exchange`. Same name ⇒ HL replaces the wallet's previous RavenX agent.
 5. `POST /copy/start` → backend verifies **both** approvals on HL (`extraAgents` and `maxBuilderFee`). A newly approved agent is saved to `agent_wallets` **immediately**, before anything else can fail, then the subscription is created.
 6. The WS daemon subscribes to the target. On each fill, the copy engine signs with the **wallet's current agent**; orders execute on the user's own HL account.
-7. Stop → sub marked inactive, any of this sub's open orders cancelled. **The agent is not revoked**: the wallet's other copies still use it.
+7. Stop → sub marked inactive, any of this sub's open orders cancelled. The user chooses whether its positions close: `close_stopped_sub` waits for a copy run in progress (the sub lock), then closes the sub's share at market, only on coins HL holds on the share's side and never more than HL holds (`market_close` trades against the account's actual side, so anything else would cut another position). A share HL no longer holds is forgotten; a close that fails is named in the stop notification. **The agent is not revoked**: the wallet's other copies still use it.
 
 ## Copy Algorithm
 
@@ -161,7 +161,7 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 **Small shares:** a delta under `min_position_usd` (default $10, HL's order minimum) is skipped and only logged — never notified, since every fill re-checks every coin (one test copy wrote 106k notifications in 4 days). A small account copying a big trader therefore misses most trades; the copy dialog warns about this and suggests a minimum scale (see the frontend's Copy Flow).
 
-**Concurrency:** a `threading.Lock` per subscription prevents double execution on rapid fills.
+**Concurrency:** a `threading.Lock` per subscription prevents double execution on rapid fills. Once it holds the lock, `execute_copy` re-reads `is_active`: the fill handler loaded the sub before that, and a stop in between (which may have closed its positions) must not be undone.
 
 ## Business Model
 

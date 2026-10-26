@@ -55,6 +55,8 @@ export interface HLFill {
   crossed: boolean
   fee: string
   feeToken: string
+  /** The client order id, when the order had one (RavenX tags its copies). */
+  cloid?: string
 }
 
 export async function fetchUserState(address: string): Promise<HLUserState> {

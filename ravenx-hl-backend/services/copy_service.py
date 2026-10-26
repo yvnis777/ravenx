@@ -323,6 +323,14 @@ def _execute_copy_locked(
 
     logger.info("execute_copy: sub=%d parent=%s target=%s",
                 sub_id, parent_address, target_address)
+    # The fill handler read this copy before taking its lock: a stop since
+    # then (which may have closed its positions) must not be undone.
+    still_active = db.session.execute(
+        db.select(Subscription.is_active).where(Subscription.id == sub_id)
+    ).scalar_one_or_none()
+    if not still_active:
+        logger.info("execute_copy: sub=%d stopped, skipping", sub_id)
+        return
     exchange = get_exchange(parent_address, agent_pkey)
     min_usd = risk_params.get("min_position_usd",
                               current_app.config["MIN_POSITION_SIZE_USD"])
@@ -550,6 +558,54 @@ def _execute_copy_locked(
             notify_copy_executed(parent_address, coin, side, fill[0], fill[1])
         except Exception:
             pass
+
+
+# How long a stop waits for a copy run already in progress
+STOP_LOCK_TIMEOUT_SECONDS = 20
+
+
+def close_stopped_sub(sub_id: int, parent_address: str, agent_pkey: str) -> dict:
+    """Close a stopped copy's share of each coin at market.
+
+    Waits for a copy run in progress, so it can't reopen what this closes.
+    Only a coin HL holds on the share's side is closed, and at most what HL
+    holds: market_close trades against the account's actual side, so on any
+    other coin it would cut someone else's position. A share HL no longer
+    holds is just forgotten. Returns {"closed": [coins], "failed": [coins]}.
+    """
+    from models.position import TrackedPosition
+    lock = _get_sub_lock(sub_id)
+    if not lock.acquire(timeout=STOP_LOCK_TIMEOUT_SECONDS):
+        raise TimeoutError(f"sub {sub_id} is still copying a fill")
+    try:
+        exchange = get_exchange(parent_address, agent_pkey)
+        held, _ = _get_state(parent_address)
+        closed, failed = [], []
+        for tp in TrackedPosition.query.filter_by(subscription_id=sub_id).all():
+            coin, share = tp.coin, float(tp.szi or 0)
+            on_hl = held.get(coin, {}).get("szi", 0.0)
+            if share == 0 or on_hl * share <= 0:
+                logger.info("sub=%d coin=%s stop_close: not held on HL, forgetting share", sub_id, coin)
+                _upsert_position(sub_id, coin, 0.0, 0.0)
+                continue
+            sz = min(abs(share), abs(on_hl))
+            _cancel_open_orders(exchange, parent_address, coin, sub_id)
+            fill = _place(sub_id, parent_address, coin, "stop_close",
+                          exchange.market_close, coin, sz=sz,
+                          cloid=_cloid_for_sub(sub_id), builder=_builder())
+            if not fill or not fill[0]:
+                failed.append(coin)
+                continue
+            left = _after_close(coin, share, fill[0])
+            _upsert_position(sub_id, coin, left, float(tp.entry_px or 0) if left else 0.0)
+            (failed if left else closed).append(coin)
+            try:
+                notify_copy_executed(parent_address, coin, "close", fill[0], fill[1])
+            except Exception:
+                pass
+        return {"closed": closed, "failed": failed}
+    finally:
+        lock.release()
 
 
 def _close_all_for_sub(sub_id: int, parent_address: str, exchange, parent_pos: dict):
