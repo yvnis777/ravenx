@@ -337,7 +337,9 @@ def _execute_copy_locked(
     max_usd = risk_params.get("max_position_usd")
     stop_loss_pct = risk_params.get("stop_loss_pct")
     max_drawdown_pct = risk_params.get("max_drawdown_pct")
-    price_tolerance_pct = risk_params.get("price_tolerance_pct", 0.5)
+    # How much worse than the trader's entry the follower accepts, in %: the
+    # user's choice, 0 = never worse, -1 = market
+    price_tolerance_pct = risk_params.get("price_tolerance_pct", DEFAULT_PRICE_TOLERANCE_PCT)
 
     target_pos, target_equity = _get_state(target_address)
     parent_pos, parent_equity = _get_state(parent_address)
@@ -472,22 +474,11 @@ def _execute_copy_locked(
                 # Only part of the old side closed: keep it, finish next fill.
                 _upsert_position(sub_id, coin, left, my_entry)
                 continue
-            new_is_long = ideal_szi > 0
-            fill = _place(sub_id, parent_address, coin, "flip_open",
-                          exchange.market_open, coin, new_is_long, abs(ideal_szi),
-                          cloid=_cloid_for_sub(sub_id), builder=_builder())
-            if not fill or not fill[0]:
-                # The close went through; record the flat position it left.
-                _upsert_position(sub_id, coin, 0.0, 0.0)
-                continue
-            new_szi, new_entry = _after_add(0.0, 0.0, new_is_long, fill[0], fill[1])
-            _upsert_position(sub_id, coin, new_szi, new_entry)
-            try:
-                side = "long" if new_is_long else "short"
-                notify_copy_executed(parent_address, coin, f"flip to {side}", fill[0], fill[1])
-            except Exception:
-                pass
-            continue
+            # Flat now. The new side is an ordinary open: it goes through the
+            # entry check below instead of being bought at market.
+            _upsert_position(sub_id, coin, 0.0, 0.0)
+            my_szi, my_entry = 0.0, 0.0
+            delta = ideal_szi
 
         is_long = ideal_szi > 0
 
@@ -558,6 +549,22 @@ def _execute_copy_locked(
             notify_copy_executed(parent_address, coin, side, fill[0], fill[1])
         except Exception:
             pass
+
+
+DEFAULT_PRICE_TOLERANCE_PCT = 0.5
+MAX_PRICE_TOLERANCE_PCT = 10
+
+
+def price_tolerance_error(risk_params: dict) -> str | None:
+    """Why risk_params' price_tolerance_pct is invalid, or None if it's fine."""
+    if "price_tolerance_pct" not in risk_params:
+        return None
+    tol = risk_params["price_tolerance_pct"]
+    if isinstance(tol, bool) or not isinstance(tol, (int, float)):
+        return "price_tolerance_pct must be a number"
+    if tol != -1 and not 0 <= tol <= MAX_PRICE_TOLERANCE_PCT:
+        return f"price_tolerance_pct must be -1 (market) or between 0 and {MAX_PRICE_TOLERANCE_PCT}"
+    return None
 
 
 # How long a stop waits for a copy run already in progress

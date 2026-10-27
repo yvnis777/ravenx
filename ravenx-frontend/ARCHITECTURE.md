@@ -93,6 +93,12 @@ app/
 
 The fee is signed **first**, so declining it means no agent was ever created. `lib/fee.ts` is the single source of truth for the rate and must match the backend's `BUILDER_ADDRESS` / `BUILDER_FEE_TENTHS_BPS`.
 
+## Link previews
+
+Shared links get a card on X and elsewhere. `app/opengraph-image.tsx` is the site card. `app/(app)/traders/[address]/opengraph-image.tsx` draws a wallet's card from live HL data (equity, 30D and all-time PnL, open positions), cached 10 minutes, and drops the stats if HL takes over 3 s, so a crawler never gets an error. The page title comes from `traders/[address]/layout.tsx` (`generateMetadata`), since the page is a client component. Card styling lives in `lib/og.tsx`. Its colors mirror the tokens, because `ImageResponse` can't read CSS variables, and its frame must stay synchronous. `metadataBase` in `app/layout.tsx` makes the URLs absolute.
+
+**Entry price** in `CopyModal` is outside Advanced: Limit with a "% worse than the trader's entry" box (0.5 by default, 0–10), or Market. It's always sent explicitly, so a copy keeps the rule it started with. `fmtEntryRule` (`lib/format.ts`) labels it in summaries.
+
 ## Key Gotchas
 
 - **Next.js 16 has breaking changes** from older versions (APIs, conventions, file layout). The docs bundled in `node_modules/next/dist/docs/` match the installed version — check them before relying on older examples.

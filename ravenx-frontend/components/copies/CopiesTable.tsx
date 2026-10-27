@@ -7,7 +7,7 @@ import { StopChoice } from '@/components/copies/StopCopy'
 import { CopyDetail } from '@/components/copies/CopyDetail'
 import type { CopySummary } from '@/lib/attribution'
 import type { CopyTrades } from '@/lib/copy-fills'
-import { fmtMoney, truncateAddress } from '@/lib/format'
+import { fmtEntryRule, fmtMoney, truncateAddress } from '@/lib/format'
 import type { Subscription } from '@/types'
 
 const TH = 'h-[26px] px-3 text-[10px] font-semibold uppercase tracking-wider text-faint whitespace-nowrap'
@@ -19,9 +19,8 @@ function summarizeRisk(sub: Subscription): string {
   if (rp.stop_loss_pct) parts.push(`SL ${rp.stop_loss_pct}%`)
   if (rp.max_drawdown_pct) parts.push(`DD ${rp.max_drawdown_pct}%`)
   if (rp.max_position_usd) parts.push(`Max $${rp.max_position_usd.toLocaleString()}`)
-  if (rp.price_tolerance_pct === -1) parts.push('Market')
-  else if (rp.price_tolerance_pct) parts.push(`±${rp.price_tolerance_pct}%`)
-  return parts.length > 0 ? parts.join(' · ') : '—'
+  parts.push(fmtEntryRule(rp.price_tolerance_pct))
+  return parts.join(' · ')
 }
 
 function fmtDate(d?: string | null) {

@@ -177,3 +177,42 @@ def test_held_coin_is_copied_after_target_flips_it(env):
                                        _mk_state({}, 200)]
         _run(sub)
         assert _intended_position(sub.id, "BTC") == pytest.approx((-2.0, 100.0))
+
+
+def test_flip_opens_the_new_side_only_at_the_traders_entry_or_better(env):
+    """The new side goes through the entry check like any open, not at market."""
+    app, info, exchange = env
+    from services.copy_service import _intended_position
+    with app.app_context():
+        sub = _sub(positions=[("BTC", 2.0, 100.0)])
+        # The trader went short at $100; BTC trades at $98: selling now is worse
+        info.user_state.side_effect = [
+            {"marginSummary": {"accountValue": "200"}, "assetPositions": [{"position": {
+                "coin": "BTC", "szi": "-2", "entryPx": "100", "positionValue": "196"}}]},
+            {"marginSummary": {"accountValue": "200"}, "assetPositions": [{"position": {
+                "coin": "BTC", "szi": "2", "entryPx": "100", "positionValue": "196"}}]},
+        ]
+        _run(sub)
+        assert _intended_position(sub.id, "BTC") == (0.0, 0.0)
+    exchange.market_close.assert_called_once()
+    exchange.market_open.assert_not_called()
+    exchange.order.assert_not_called()
+
+
+@pytest.mark.parametrize("risk_params,buys", [
+    ({}, True),                              # default 0.5% accepts 0.2% worse
+    ({"price_tolerance_pct": 0}, False),     # 0%: never worse than the trader
+    ({"price_tolerance_pct": 0.1}, False),
+    ({"price_tolerance_pct": 1}, True),
+])
+def test_entry_tolerance_is_the_users_choice(env, risk_params, buys):
+    app, info, exchange = env
+    with app.app_context():
+        sub = _sub()
+        info.user_state.side_effect = [
+            {"marginSummary": {"accountValue": "200"}, "assetPositions": [{"position": {
+                "coin": "BTC", "szi": "2", "entryPx": "100", "positionValue": "200.4"}}]},
+            _mk_state({}, 200),
+        ]
+        _run(sub, risk_params)  # BTC at $100.20: 0.2% worse than the trader's entry
+    assert exchange.order.called is buys

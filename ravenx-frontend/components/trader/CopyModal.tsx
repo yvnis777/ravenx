@@ -19,7 +19,12 @@ import {
   SCALE_LIMIT,
   type SizingCheck,
 } from '@/lib/copy-sizing'
-import { fmtMoney } from '@/lib/format'
+import {
+  DEFAULT_ENTRY_TOLERANCE_PCT,
+  fmtEntryRule,
+  fmtMoney,
+  MAX_ENTRY_TOLERANCE_PCT,
+} from '@/lib/format'
 import { StopChoice } from '@/components/copies/StopCopy'
 import type { Subscription } from '@/types'
 
@@ -44,8 +49,7 @@ function formatRiskSummary(sub: Subscription): string {
   if (rp.stop_loss_pct) parts.push(`SL ${rp.stop_loss_pct}%`)
   if (rp.max_drawdown_pct) parts.push(`DD ${rp.max_drawdown_pct}%`)
   if (rp.max_position_usd) parts.push(`Max $${rp.max_position_usd}`)
-  if (rp.price_tolerance_pct === -1) parts.push('Market orders')
-  else if (rp.price_tolerance_pct) parts.push(`±${rp.price_tolerance_pct}%`)
+  parts.push(fmtEntryRule(rp.price_tolerance_pct))
   return parts.join(' · ')
 }
 
@@ -224,6 +228,13 @@ function SizingNotice({
   )
 }
 
+/** The typed tolerance, clamped to what the backend accepts; blank is the default. */
+function entryTolerance(text: string): number {
+  const v = Number(text)
+  if (text.trim() === '' || !Number.isFinite(v)) return DEFAULT_ENTRY_TOLERANCE_PCT
+  return Math.min(MAX_ENTRY_TOLERANCE_PCT, Math.max(0, v))
+}
+
 interface CopyModalProps {
   targetAddress: string
   onClose: () => void
@@ -244,8 +255,8 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
   const [maxDrawdown, setMaxDrawdown] = useState('20')
   const [maxPositionEnabled, setMaxPositionEnabled] = useState(false)
   const [maxPosition, setMaxPosition] = useState('5000')
-  const [priceMode, setPriceMode] = useState<'default' | 'tolerance' | 'market'>('default')
-  const [priceTolerance, setPriceTolerance] = useState('0.5')
+  const [priceMode, setPriceMode] = useState<'limit' | 'market'>('limit')
+  const [priceTolerance, setPriceTolerance] = useState(String(DEFAULT_ENTRY_TOLERANCE_PCT))
   const [copyExistingMode, setCopyExistingMode] = useState<'none' | 'favorable' | 'market'>('none')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -299,12 +310,9 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
     setMaxDrawdown(String(rp.max_drawdown_pct ?? 20))
     setMaxPositionEnabled(!!rp.max_position_usd)
     setMaxPosition(String(rp.max_position_usd ?? 5000))
-    const tol = rp.price_tolerance_pct
-    if (tol === -1) setPriceMode('market')
-    else if (tol != null && tol > 0) {
-      setPriceMode('tolerance')
-      setPriceTolerance(String(tol))
-    } else setPriceMode('default')
+    const tol = rp.price_tolerance_pct ?? DEFAULT_ENTRY_TOLERANCE_PCT
+    setPriceMode(tol === -1 ? 'market' : 'limit')
+    setPriceTolerance(String(tol === -1 ? DEFAULT_ENTRY_TOLERANCE_PCT : tol))
     setError('')
     setEditing(true)
   }
@@ -326,11 +334,8 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
       ...(stopLossEnabled ? { stop_loss_pct: Number(stopLoss) } : {}),
       ...(maxDrawdownEnabled ? { max_drawdown_pct: Number(maxDrawdown) } : {}),
       ...(maxPositionEnabled ? { max_position_usd: Number(maxPosition) } : {}),
-      ...(priceMode === 'market'
-        ? { price_tolerance_pct: -1 }
-        : priceMode === 'tolerance'
-          ? { price_tolerance_pct: Number(priceTolerance) }
-          : {}),
+      // Always explicit, so the copy keeps the rule it was started with
+      price_tolerance_pct: priceMode === 'market' ? -1 : entryTolerance(priceTolerance),
       ...(copyExistingMode !== 'none' ? { copy_existing_mode: copyExistingMode } : {}),
     }
   }
@@ -385,7 +390,7 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
 
   const truncated = `${targetAddress.slice(0, 6)}…${targetAddress.slice(-4)}`
   const hasCustomSettings =
-    priceMode !== 'default' || stopLossEnabled || maxDrawdownEnabled || maxPositionEnabled
+    stopLossEnabled || maxDrawdownEnabled || maxPositionEnabled
 
   const stepMessage =
     step.kind === 'awaiting-fee-signature'
@@ -457,6 +462,42 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
 
       <SizingNotice sizing={sizing} scalingPct={scalingPct} onScale={setScale} />
 
+      <div className="flex flex-col gap-1.5">
+        <span className={LABEL}>Entry price</span>
+        <Segmented
+          value={priceMode}
+          onChange={setPriceMode}
+          options={[
+            { key: 'limit', label: 'Limit' },
+            { key: 'market', label: 'Market' },
+          ]}
+        />
+        {priceMode === 'limit' ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-faint">At most</span>
+              <input
+                type="number"
+                value={priceTolerance}
+                onChange={(e) => setPriceTolerance(e.target.value)}
+                onBlur={() => setPriceTolerance(String(entryTolerance(priceTolerance)))}
+                min={0}
+                max={MAX_ENTRY_TOLERANCE_PCT}
+                step={0.1}
+                aria-label="Maximum percent worse than the trader's entry"
+                className={`${FIELD} w-16 text-right`}
+              />
+              <span className="text-[11px] text-faint">% worse than the trader&apos;s entry</span>
+            </div>
+            <p className="text-[11px] text-faint">
+              0% never buys worse than the trader. A little room copies more of their trades.
+            </p>
+          </>
+        ) : (
+          <p className="text-[11px] text-warn">Market orders execute at any price.</p>
+        )}
+      </div>
+
       <button
         type="button"
         onClick={() => setShowAdvanced(!showAdvanced)}
@@ -470,42 +511,6 @@ export function CopyModal({ targetAddress, onClose }: CopyModalProps) {
 
       {showAdvanced && (
         <div className="flex flex-col gap-4 animate-slide-up">
-          <div className="flex flex-col gap-1.5">
-            <span className={LABEL}>Entry price</span>
-            <Segmented
-              value={priceMode}
-              onChange={setPriceMode}
-              options={[
-                { key: 'default', label: 'Same or better' },
-                { key: 'tolerance', label: 'Tolerance' },
-                { key: 'market', label: 'Market' },
-              ]}
-            />
-            {priceMode === 'tolerance' && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  value={priceTolerance}
-                  onChange={(e) => setPriceTolerance(e.target.value)}
-                  onBlur={() => {
-                    const v = Number(priceTolerance)
-                    if (v < 0.1) setPriceTolerance('0.1')
-                    if (v > 10) setPriceTolerance('10')
-                  }}
-                  min={0.1}
-                  max={10}
-                  step={0.1}
-                  aria-label="Price tolerance percent"
-                  className={`${FIELD} w-16 text-right`}
-                />
-                <span className="text-[11px] text-faint">% worse than trader&apos;s entry</span>
-              </div>
-            )}
-            {priceMode === 'market' && (
-              <p className="text-[11px] text-warn">Market orders execute at any price.</p>
-            )}
-          </div>
-
           <div className="flex flex-col gap-1.5">
             <span className={LABEL}>Existing positions</span>
             <Segmented

@@ -16,7 +16,7 @@ Copy-trading platform for Hyperliquid. Users connect their own wallet, paste the
 | Exchange | `hyperliquid-python-sdk==0.22.0` |
 | Background jobs | APScheduler |
 | Monitoring | `websockets` daemon thread |
-| Tests | pytest (107 tests) |
+| Tests | pytest (120 tests) |
 
 ## Quick Start
 
@@ -147,7 +147,7 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 ## Copy Algorithm
 
-**Entry invariant:** each increase places an IOC limit at a weighted-average price keeping the follower's total entry ≤ the target's (longs) or ≥ (shorts).
+**Entry limit:** each increase places an IOC limit at a weighted-average price keeping the follower's total entry within `price_tolerance_pct` of the target's: at most that % above it for longs, below it for shorts. The user sets it per copy: default 0.5 (`DEFAULT_PRICE_TOLERANCE_PCT`), 0 = never worse than the target, up to 10, or -1 for market orders. `price_tolerance_error` validates it on start and edit.
 
 **Fills, not requests:** every order is IOC, and a sub's intended share records the size and average price HL reports as filled. Whatever didn't fill is re-ordered on the target's next fill. Nothing is left resting on the book, where it could fill later without being recorded.
 
@@ -155,7 +155,7 @@ Cohorts: `shrimp` ($100–$1K), `fish` ($1K–$10K), `dolphin` ($10K–$100K), `
 
 **Multi-copy:** one user can run N subscriptions on one HL account. Each sub owns an *intended share* per coin (`TrackedPosition`); orders are sized to that sub's delta, never to the account's actual position. Cancels filter by a per-sub cloid prefix, so one sub never touches another's orders.
 
-**Decision tree per coin on fill:** stop-loss → close this sub's share · target closed → close · direction flip → close then open · reducing → reduce-only close of the surplus · held at start → skip · increasing at a favorable price → IOC limit · otherwise skip.
+**Decision tree per coin on fill:** stop-loss → close this sub's share · target closed → close · direction flip → close at market, then open the new side through the same entry limit (it used to open at market) · reducing → reduce-only close of the surplus · held at start → skip · increasing at a favorable price → IOC limit · otherwise skip.
 
 **Scaling:** `ideal_szi = my_equity × (target_szi / target_equity) × (scaling_pct / 100)`, with equity read per account mode (see Key Gotchas).
 

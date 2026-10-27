@@ -26,9 +26,17 @@ const chakraPetch = Chakra_Petch({
   variable: '--font-chakra',
 })
 
+const DESCRIPTION =
+  "Copy any Hyperliquid wallet from your own account, at the trader's entry or within a " +
+  'limit you set. Non-custodial and open source.'
+
 export const metadata: Metadata = {
+  // Preview cards need absolute URLs; app/opengraph-image.tsx is the default card
+  metadataBase: new URL('https://ravenx.app'),
   title: 'RavenX — Copy the best Hyperliquid traders',
-  description: 'Copy-trade top Hyperliquid wallets. Always at a better entry price.',
+  description: DESCRIPTION,
+  openGraph: { siteName: 'RavenX', type: 'website', description: DESCRIPTION },
+  twitter: { card: 'summary_large_image' },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

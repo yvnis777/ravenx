@@ -58,8 +58,8 @@ interface Feature {
 
 const FEATURES: Feature[] = [
   {
-    title: 'Guaranteed better entry',
-    desc: 'Limit orders sized so your weighted-average entry is always at least as good as the trader you copy. A mathematical invariant, not a heuristic.',
+    title: 'Your entry, your limit',
+    desc: "Every open is a limit order priced against the trader's own entry: at most 0.5% worse by default, or never worse at 0%. If the price isn't there, no order is placed.",
     highlight: true,
   },
   {
@@ -79,8 +79,8 @@ const FEATURES: Feature[] = [
 
 const FAQ_ITEMS: { q: string; a: string }[] = [
   {
-    q: 'How does the algorithm guarantee a better entry?',
-    a: "RavenX places limit orders calculated so your weighted-average entry is always equal to or better than the trader you're copying. Longs fill at or below their price, shorts at or above. If the price never becomes favorable, no order is placed — the guarantee is never traded away for speed.",
+    q: 'How does RavenX protect my entry price?',
+    a: "Each open is a limit order sized so your average entry stays within the limit you set of the trader's: at most 0.5% worse by default, or never worse at 0%. Longs buy at or below that price, shorts sell at or above it. If the market never gets there, no order is placed: you can miss a trade, but you never chase one. You can also choose market orders.",
   },
   {
     q: 'How does RavenX trade for me?',
@@ -239,8 +239,8 @@ export default function LandingPage() {
 
         <p className="mb-5 max-w-lg text-base text-accent sm:text-lg">
           {FEES_ENABLED
-            ? 'Copy top Hyperliquid traders — at a mathematically guaranteed better entry price.'
-            : 'Copy top Hyperliquid traders for free — at a mathematically guaranteed better entry price.'}
+            ? "Copy top Hyperliquid traders at their entry price, or within a limit you set."
+            : "Copy top Hyperliquid traders for free, at their entry price or within a limit you set."}
         </p>
 
         <p className="mb-9 max-w-md text-[13px] leading-relaxed text-muted">
@@ -361,7 +361,7 @@ export default function LandingPage() {
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-2 text-center text-xl font-semibold text-fg">Why RavenX</h2>
           <p className="mb-10 text-center text-[13px] text-faint">
-            The only copy-trading platform that guarantees a better price than the trader you follow.
+            Copy trading that doesn&apos;t chase: you decide how far from the trader&apos;s entry you&apos;ll buy.
           </p>
 
           <div className="grid grid-cols-1 gap-px border border-line bg-line sm:grid-cols-3">

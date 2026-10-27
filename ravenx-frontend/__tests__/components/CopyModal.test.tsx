@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CopyModal } from '@/components/trader/CopyModal'
 import type { OpenPosition } from '@/types'
@@ -11,8 +11,11 @@ vi.mock('@reown/appkit/react', () => ({ useAppKit: () => ({ open: vi.fn() }) }))
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ address: ME, isAuthenticated: true, isConnected: true }),
 }))
+const post = vi.fn().mockResolvedValue({ data: {} })
+vi.mock('@/lib/api', () => ({ api: { post: (...a: unknown[]) => post(...a) } }))
+vi.mock('@/lib/hl-env', () => ({ assertBackendNetwork: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/hooks/useAgentApproval', () => ({
-  useAgentApproval: () => ({ approve: vi.fn(), step: { kind: 'idle' } }),
+  useAgentApproval: () => ({ approve: vi.fn().mockResolvedValue('0xagent'), step: { kind: 'idle' } }),
   BUILDER_ADDRESS: '',
   feeRateLabel: () => '0%',
 }))
@@ -84,5 +87,42 @@ describe('CopyModal sizing check', () => {
     state.fills = []
     renderModal()
     expect(screen.getByText(/hasn.t opened a trade in the last 7 days/)).toBeInTheDocument()
+  })
+})
+
+describe('CopyModal entry price', () => {
+  async function start() {
+    fireEvent.click(screen.getByRole('button', { name: 'Start copying' }))
+    await waitFor(() => expect(post).toHaveBeenCalled())
+    return post.mock.calls.at(-1)![1].risk_params.price_tolerance_pct
+  }
+  const field = () => screen.getByLabelText("Maximum percent worse than the trader's entry")
+
+  beforeEach(() => post.mockClear())
+
+  it('allows 0.5% worse by default', async () => {
+    renderModal()
+    expect(field()).toHaveValue(0.5)
+    expect(await start()).toBe(0.5)
+  })
+
+  it('takes the percent the user sets, 0 included', async () => {
+    renderModal()
+    fireEvent.change(field(), { target: { value: '0' } })
+    expect(await start()).toBe(0)
+  })
+
+  it('keeps the percent within what the backend accepts', async () => {
+    renderModal()
+    fireEvent.change(field(), { target: { value: '25' } })
+    fireEvent.blur(field())
+    expect(field()).toHaveValue(10)
+    expect(await start()).toBe(10)
+  })
+
+  it('sends market orders as -1', async () => {
+    renderModal()
+    fireEvent.click(screen.getByRole('button', { name: 'Market' }))
+    expect(await start()).toBe(-1)
   })
 })

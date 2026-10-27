@@ -31,3 +31,15 @@ export function timeAgo(dateStr: string, now = Date.now()): string {
   if (hrs < 24) return `${hrs}h ago`
   return `${Math.floor(hrs / 24)}d ago`
 }
+
+/** Must match the backend's DEFAULT_PRICE_TOLERANCE_PCT / MAX_PRICE_TOLERANCE_PCT. */
+export const DEFAULT_ENTRY_TOLERANCE_PCT = 0.5
+export const MAX_ENTRY_TOLERANCE_PCT = 10
+
+/** A copy's entry rule in a few words; -1 is market, unset is the default. */
+export function fmtEntryRule(tolerancePct: number | undefined): string {
+  const tol = tolerancePct ?? DEFAULT_ENTRY_TOLERANCE_PCT
+  if (tol === -1) return 'Market'
+  if (tol === 0) return 'Entry same or better'
+  return `Entry ≤ +${tol}%`
+}

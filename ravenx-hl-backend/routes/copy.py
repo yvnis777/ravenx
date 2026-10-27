@@ -13,6 +13,7 @@ from services.agent_service import (
     PendingAgentNotFound, get_exchange, pop_pending_pkey, save_wallet_agent,
     verify_agent_approved, verify_builder_fee_approved, wallet_agent,
 )
+from services.copy_service import price_tolerance_error
 from services.notification_service import notify_copy_started, notify_copy_stopped
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,8 @@ def start_copying():
     risk_params = body.get("risk_params") or {}
     if not isinstance(risk_params, dict):
         return jsonify({"error": "risk_params must be a JSON object"}), 400
+    if err := price_tolerance_error(risk_params):
+        return jsonify({"error": err}), 400
 
     target_name = (body.get("target_name") or "").strip()[:100] or None
 
@@ -285,6 +288,8 @@ def update_subscription(sub_id: int):
     if "risk_params" in body:
         if not isinstance(body["risk_params"], dict):
             return jsonify({"error": "risk_params must be a JSON object"}), 400
+        if err := price_tolerance_error(body["risk_params"]):
+            return jsonify({"error": err}), 400
         sub.risk_params = body["risk_params"]
     if "target_name" in body:
         sub.target_name = (body["target_name"] or "").strip()[:100] or None

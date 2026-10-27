@@ -72,3 +72,12 @@ def test_missing_column_is_added_on_boot(app):
         _add_missing_columns()
         cols = {c["name"] for c in inspect(db.engine).get_columns("subscriptions")}
     assert "held_at_start" in cols
+
+
+@pytest.mark.parametrize("tol,ok", [(0, True), (0.5, True), (10, True), (-1, True),
+                                    (11, False), (-0.5, False), ("1", False), (True, False)])
+def test_price_tolerance_is_validated(app, start, tol, ok):
+    call, info = start
+    info.user_state.return_value = _mk_state({}, 1_000)
+    res = call({"price_tolerance_pct": tol})
+    assert (res.status_code == 201) is ok
